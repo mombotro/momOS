@@ -6,6 +6,7 @@
 #include "mm/phys.h"
 #include "mm/paging.h"
 #include "mm/heap.h"
+#include "vfs/vfs.h"
 
 /* Exported by linker script */
 extern uint32_t _kernel_end;
@@ -50,6 +51,15 @@ typedef struct {
     uint32_t type; /* 1 = available */
 } __attribute__((packed)) mb1_mmap_t;
 
+/* Multiboot1 module entry */
+typedef struct {
+    uint32_t mod_start;
+    uint32_t mod_end;
+    uint32_t cmdline;
+    uint32_t reserved;
+} __attribute__((packed)) mb1_mod_t;
+
+#define MB1_FLAG_MODS (1 << 3)
 #define MB1_FLAG_MMAP (1 << 6)
 #define MB1_FLAG_FB   (1 << 12)
 
@@ -128,6 +138,13 @@ static void print_mmap(mb1_info_t *mb) {
     }
 }
 
+static void vfs_print_entry(const vfs_dirent_t *e, void *ud) {
+    (void)ud;
+    serial_puts(e->is_dir ? "  DIR  " : "  FILE ");
+    serial_puts(e->name);
+    serial_puts("\n");
+}
+
 /* ── Kernel entry ────────────────────────────────────────────────────────────*/
 void kernel_main(uint32_t magic, mb1_info_t *mb) {
     serial_init();
@@ -156,6 +173,14 @@ void kernel_main(uint32_t magic, mb1_info_t *mb) {
     /* Physical memory allocator */
     if (mb->flags & MB1_FLAG_MMAP) {
         phys_init(mb->mmap_addr, mb->mmap_length, (uint32_t)&_kernel_end);
+
+        /* Reserve multiboot modules so heap_alloc can't clobber them */
+        if ((mb->flags & MB1_FLAG_MODS) && mb->mods_count > 0) {
+            mb1_mod_t *mods = (mb1_mod_t *)mb->mods_addr;
+            for (uint32_t i = 0; i < mb->mods_count; i++)
+                phys_reserve(mods[i].mod_start, mods[i].mod_end);
+        }
+
         serial_puts("[PHYS] ");
         serial_hex(phys_free_count() * PAGE_SIZE / 1024 / 1024);
         serial_puts(" MB free / ");
@@ -180,11 +205,24 @@ void kernel_main(uint32_t magic, mb1_info_t *mb) {
     /* Kernel heap */
     heap_init();
 
+    /* Mount initrd (first multiboot module) */
+    if ((mb->flags & MB1_FLAG_MODS) && mb->mods_count > 0) {
+        mb1_mod_t *mod = (mb1_mod_t *)mb->mods_addr;
+        uint32_t size = mod->mod_end - mod->mod_start;
+        vfs_init(mod->mod_start, size);
+    } else {
+        serial_puts("[VFS] no initrd module\n");
+    }
+
     serial_puts("[FB] ");
     serial_hex(fb_w); serial_puts("x");
     serial_hex(fb_h); serial_puts(" @ ");
     serial_hex((uint32_t)mb->fb_addr);
     serial_puts("\n");
+
+    /* Quick VFS smoke test — list root */
+    serial_puts("[VFS] root:\n");
+    vfs_list("/", vfs_print_entry, 0);
 
     serial_puts("=== boot OK ===\n");
 

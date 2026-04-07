@@ -13,6 +13,7 @@ CC     = i686-elf-gcc
 LD     = i686-elf-ld
 AS     = nasm
 QEMU   = qemu-system-i386
+HOSTCC = gcc
 
 CFLAGS  = -std=c11 -ffreestanding -O2 -Wall -Wextra \
           -fno-stack-protector -fno-builtin
@@ -28,11 +29,20 @@ OBJS = kernel/boot/entry.o \
        kernel/mm/phys.o \
        kernel/mm/paging.o \
        kernel/mm/heap.o \
+       kernel/vfs/vfs.o \
        kernel/kernel.o
 
 # ── Targets ──────────────────────────────────────────────────────────────────
 
-all: kernel.bin
+all: kernel.bin tools/mklfs initrd.lfs
+
+# ── Host tools ────────────────────────────────────────────────────────────────
+tools/mklfs: tools/mklfs.c kernel/vfs/lfs_format.h
+	$(HOSTCC) -std=c11 -O2 -Wall -o $@ $<
+
+# ── initrd image ──────────────────────────────────────────────────────────────
+initrd.lfs: tools/mklfs $(shell find initrd -type f)
+	./tools/mklfs initrd initrd.lfs
 
 kernel/boot/entry.o: kernel/boot/entry.asm
 	$(AS) -f elf32 $< -o $@
@@ -49,6 +59,9 @@ kernel/cpu/%.o: kernel/cpu/%.c
 kernel/mm/%.o: kernel/mm/%.c
 	$(CC) $(CFLAGS) -Ikernel -c $< -o $@
 
+kernel/vfs/%.o: kernel/vfs/%.c
+	$(CC) $(CFLAGS) -Ikernel -c $< -o $@
+
 kernel/kernel.o: kernel/kernel.c
 	$(CC) $(CFLAGS) -Ikernel -c $< -o $@
 
@@ -60,7 +73,8 @@ kernel.bin: $(OBJS)
 iso:
 	mkdir -p iso/boot/grub
 	cp kernel.bin iso/boot/kernel.bin
-	printf 'set timeout=0\nset default=0\n\nmenuentry "momOS" {\n\tmultiboot /boot/kernel.bin\n\tboot\n}\n' > iso/boot/grub/grub.cfg
+	cp initrd.lfs iso/boot/initrd.lfs
+	printf 'set timeout=0\nset default=0\n\nmenuentry "momOS" {\n\tmultiboot /boot/kernel.bin\n\tmodule /boot/initrd.lfs\n\tboot\n}\n' > iso/boot/grub/grub.cfg
 	grub-mkrescue -o momos.iso iso
 	rm -rf iso
 
@@ -80,10 +94,12 @@ run-serial: kernel.bin
 	        -serial stdio
 
 clean:
+	rm -f tools/mklfs tools/mklfs.exe initrd.lfs
 	rm -f kernel/boot/entry.o kernel/kernel.o \
 	      kernel/cpu/cpu.o kernel/cpu/isr.o \
 	      kernel/cpu/serial.o kernel/cpu/gdt.o kernel/cpu/idt.o kernel/cpu/pit.o \
 	      kernel/mm/phys.o kernel/mm/paging.o kernel/mm/heap.o \
+	      kernel/vfs/vfs.o \
 	      kernel.bin momos.iso
 	rm -rf iso
 

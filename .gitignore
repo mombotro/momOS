@@ -3,6 +3,11 @@
 *.bin
 *.iso
 *.img
+*.lfs
+
+# Host tools (built from source)
+tools/mklfs
+tools/mklfs.exe
 
 # ISO staging directory
 iso/

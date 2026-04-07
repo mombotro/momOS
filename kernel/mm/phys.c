@@ -83,6 +83,14 @@ uint32_t phys_alloc(void) {
     return 0; /* out of memory */
 }
 
+void phys_reserve(uint32_t start, uint32_t end) {
+    uint32_t first = start / PAGE_SIZE;
+    uint32_t last  = (end + PAGE_SIZE - 1) / PAGE_SIZE;
+    for (uint32_t f = first; f < last && f < MAX_FRAMES; f++) {
+        if (!frame_used(f)) { frame_set(f); free_count--; }
+    }
+}
+
 void phys_free(uint32_t addr) {
     uint32_t f = addr / PAGE_SIZE;
     if (f < MAX_FRAMES && frame_used(f)) {
