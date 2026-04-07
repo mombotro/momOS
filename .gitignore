@@ -1,0 +1,8 @@
+# Build outputs
+*.o
+*.bin
+*.iso
+*.img
+
+# ISO staging directory
+iso/
