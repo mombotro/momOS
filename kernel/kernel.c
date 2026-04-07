@@ -3,6 +3,12 @@
 #include "cpu/gdt.h"
 #include "cpu/idt.h"
 #include "cpu/pit.h"
+#include "mm/phys.h"
+#include "mm/paging.h"
+#include "mm/heap.h"
+
+/* Exported by linker script */
+extern uint32_t _kernel_end;
 
 /* ── Multiboot1 info structure ───────────────────────────────────────────────*/
 typedef struct {
@@ -147,6 +153,16 @@ void kernel_main(uint32_t magic, mb1_info_t *mb) {
     serial_puts("[MMAP]\n");
     print_mmap(mb);
 
+    /* Physical memory allocator */
+    if (mb->flags & MB1_FLAG_MMAP) {
+        phys_init(mb->mmap_addr, mb->mmap_length, (uint32_t)&_kernel_end);
+        serial_puts("[PHYS] ");
+        serial_hex(phys_free_count() * PAGE_SIZE / 1024 / 1024);
+        serial_puts(" MB free / ");
+        serial_hex(phys_total_count() * PAGE_SIZE / 1024 / 1024);
+        serial_puts(" MB total\n");
+    }
+
     if (!mb || !(mb->flags & MB1_FLAG_FB) || mb->fb_type != 1) {
         serial_puts("[FB] not provided by bootloader\n");
         vga_print("NO FRAMEBUFFER");
@@ -157,6 +173,12 @@ void kernel_main(uint32_t magic, mb1_info_t *mb) {
     fb_w     = mb->fb_width;
     fb_h     = mb->fb_height;
     fb_pitch = mb->fb_pitch;
+
+    /* Paging (identity map 0–64 MB + framebuffer) */
+    paging_init((uint32_t)mb->fb_addr, fb_w * fb_h * (mb->fb_bpp / 8));
+
+    /* Kernel heap */
+    heap_init();
 
     serial_puts("[FB] ");
     serial_hex(fb_w); serial_puts("x");

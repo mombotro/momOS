@@ -25,6 +25,9 @@ OBJS = kernel/boot/entry.o \
        kernel/cpu/gdt.o \
        kernel/cpu/idt.o \
        kernel/cpu/pit.o \
+       kernel/mm/phys.o \
+       kernel/mm/paging.o \
+       kernel/mm/heap.o \
        kernel/kernel.o
 
 # ── Targets ──────────────────────────────────────────────────────────────────
@@ -41,6 +44,9 @@ kernel/cpu/isr.o: kernel/cpu/isr.asm
 	$(AS) -f elf32 $< -o $@
 
 kernel/cpu/%.o: kernel/cpu/%.c
+	$(CC) $(CFLAGS) -Ikernel -c $< -o $@
+
+kernel/mm/%.o: kernel/mm/%.c
 	$(CC) $(CFLAGS) -Ikernel -c $< -o $@
 
 kernel/kernel.o: kernel/kernel.c
@@ -77,6 +83,7 @@ clean:
 	rm -f kernel/boot/entry.o kernel/kernel.o \
 	      kernel/cpu/cpu.o kernel/cpu/isr.o \
 	      kernel/cpu/serial.o kernel/cpu/gdt.o kernel/cpu/idt.o kernel/cpu/pit.o \
+	      kernel/mm/phys.o kernel/mm/paging.o kernel/mm/heap.o \
 	      kernel.bin momos.iso
 	rm -rf iso
 
