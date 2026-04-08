@@ -103,6 +103,20 @@ void *kmalloc(uint32_t size) {
     return kmalloc(size);
 }
 
+void *krealloc(void *ptr, uint32_t size) {
+    if (!ptr) return kmalloc(size);
+    if (!size) { kfree(ptr); return 0; }
+    block_t *b = (block_t *)((uint8_t *)ptr - sizeof(block_t));
+    if (b->size >= size) return ptr; /* already big enough */
+    void *newp = kmalloc(size);
+    if (!newp) return 0;
+    uint32_t copy = b->size < size ? b->size : size;
+    for (uint32_t i = 0; i < copy; i++)
+        ((uint8_t *)newp)[i] = ((uint8_t *)ptr)[i];
+    kfree(ptr);
+    return newp;
+}
+
 void kfree(void *ptr) {
     if (!ptr) return;
     block_t *b = (block_t *)((uint8_t *)ptr - sizeof(block_t));

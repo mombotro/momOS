@@ -35,3 +35,7 @@ void vfs_close(vfs_file_t *f);
 int vfs_list(const char *path,
              void (*cb)(const vfs_dirent_t *e, void *ud),
              void *userdata);
+
+/* Read entire file into a heap-allocated, NUL-terminated buffer.
+   Caller must kfree() the result. Returns NULL on error. */
+char *vfs_read_alloc(const char *path);

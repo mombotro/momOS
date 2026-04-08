@@ -3,10 +3,13 @@
 #include "cpu/gdt.h"
 #include "cpu/idt.h"
 #include "cpu/pit.h"
+#include "cpu/keyboard.h"
+#include "cpu/mouse.h"
 #include "mm/phys.h"
 #include "mm/paging.h"
 #include "mm/heap.h"
 #include "vfs/vfs.h"
+#include "lua/klua.h"
 
 /* Exported by linker script */
 extern uint32_t _kernel_end;
@@ -166,6 +169,10 @@ void kernel_main(uint32_t magic, mb1_info_t *mb) {
     serial_puts("[CPU] interrupts enabled\n");
 
     pit_init();
+    kbd_init();
+    serial_puts("[KBD] ready\n");
+    mouse_init();
+    serial_puts("[MOUSE] ready\n");
 
     serial_puts("[MMAP]\n");
     print_mmap(mb);
@@ -224,26 +231,25 @@ void kernel_main(uint32_t magic, mb1_info_t *mb) {
     serial_puts("[VFS] root:\n");
     vfs_list("/", vfs_print_entry, 0);
 
+    /* Lua VM */
+    klua_init(backbuf, fb_w, fb_h, pal);
+
+    /* Load and run main script from initrd */
+    char *script = vfs_read_alloc("/sys/main.lua");
+    if (script) {
+        serial_puts("[LUA] running /sys/main.lua\n");
+        klua_run(script);
+        kfree(script);
+    } else {
+        serial_puts("[LUA] /sys/main.lua not found\n");
+    }
+
     serial_puts("=== boot OK ===\n");
 
-    /* ── Bouncing box ────────────────────────────────────────────────────── */
-    int bx = 50, by = 50;
-    int vx = 4,  vy = 3;
-    const int bw = 48, bh = 48;
-
     while (1) {
-        cls(pal[0]);
-        rect(bx, by, bw, bh, pal[5]);
-        rect(bx + bw/2 - 1, by + 4,        3, bh - 8, pal[7]);
-        rect(bx + 4,        by + bh/2 - 1, bw - 8, 3, pal[7]);
-        present(); /* blit back buffer → no tearing/flicker */
-
-        bx += vx; by += vy;
-        if (bx < 0)               { bx = 0;               vx = -vx; }
-        if (bx + bw > (int)fb_w)  { bx = (int)fb_w - bw;  vx = -vx; }
-        if (by < 0)               { by = 0;               vy = -vy; }
-        if (by + bh > (int)fb_h)  { by = (int)fb_h - bh;  vy = -vy; }
-
-        pit_sleep(1); /* lock to 60 Hz */
+        klua_call("_update");
+        klua_call("_draw");
+        present();
+        pit_sleep(1);
     }
 }

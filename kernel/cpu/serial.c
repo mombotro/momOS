@@ -25,6 +25,10 @@ void serial_puts(const char *s) {
     }
 }
 
+void serial_write(const char *s, unsigned int len) {
+    for (unsigned int i = 0; i < len; i++) serial_putc(s[i]);
+}
+
 void serial_hex(uint32_t n) {
     serial_puts("0x");
     char buf[9];

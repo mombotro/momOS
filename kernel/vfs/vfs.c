@@ -36,8 +36,11 @@ static uint32_t kstrlen(const char *s) {
 
 /* ── Init ───────────────────────────────────────────────────────────────────*/
 void vfs_init(uint32_t lfs_phys_addr, uint32_t lfs_size) {
-    (void)lfs_size;
-    lfs_base  = (uint8_t *)lfs_phys_addr;
+    /* Copy image into heap so future kmalloc can't overwrite the initrd */
+    lfs_base = (uint8_t *)kmalloc(lfs_size);
+    if (!lfs_base) { serial_puts("[VFS] out of memory\n"); return; }
+    uint8_t *src = (uint8_t *)lfs_phys_addr;
+    for (uint32_t i = 0; i < lfs_size; i++) lfs_base[i] = src[i];
     sb        = (lfs_super_t *)lfs_base;
 
     if (sb->magic[0] != 'L' || sb->magic[1] != 'F' ||
@@ -146,6 +149,18 @@ uint32_t vfs_size(vfs_file_t *f) {
 
 void vfs_close(vfs_file_t *f) {
     kfree(f);
+}
+
+char *vfs_read_alloc(const char *path) {
+    vfs_file_t *f = vfs_open(path);
+    if (!f) return 0;
+    uint32_t sz = vfs_size(f);
+    char *buf = (char *)kmalloc(sz + 1);
+    if (!buf) { vfs_close(f); return 0; }
+    vfs_read(f, 0, buf, sz);
+    buf[sz] = '\0';
+    vfs_close(f);
+    return buf;
 }
 
 int vfs_list(const char *path,

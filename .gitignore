@@ -11,3 +11,6 @@ tools/mklfs.exe
 
 # ISO staging directory
 iso/
+
+# Debug screenshots
+*.png
