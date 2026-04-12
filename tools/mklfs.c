@@ -20,6 +20,7 @@
 #define DEFAULT_INODES   64
 #define MAX_INODES      256
 #define MAX_DATA_BLOCKS 4096   /* 4096 × 512 = 2 MB */
+#define EXTRA_FREE_BLOCKS 256  /* 256 × 512 = 128 KB of writable free space */
 
 /* ── In-memory image ────────────────────────────────────────────────────────*/
 static uint8_t image[1 + (MAX_INODES / LFS_INODES_PER_BLOCK) + MAX_DATA_BLOCKS]
@@ -205,18 +206,24 @@ int main(int argc, char **argv) {
         memcpy(image[blk] + off, &inodes[i], LFS_INODE_SIZE);
     }
 
-    /* Calculate real image size (no trailing empty data blocks) */
-    uint32_t used_blocks = data_start + next_data;
+    /* Write used blocks + extra free blocks so the kernel has writable space */
+    uint32_t used_blocks   = data_start + next_data;
+    uint32_t padded_blocks = used_blocks + EXTRA_FREE_BLOCKS;
+    if (padded_blocks > data_start + MAX_DATA_BLOCKS)
+        padded_blocks = data_start + MAX_DATA_BLOCKS;
+
+    /* Update total_blocks in superblock to match what we actually write */
+    super->total_blocks = padded_blocks;
 
     FILE *f = fopen(out, "wb");
     if (!f) { perror("fopen"); return 1; }
-    fwrite(image, LFS_BLOCK_SIZE, used_blocks, f);
+    fwrite(image, LFS_BLOCK_SIZE, padded_blocks, f);
     fclose(f);
 
     printf("mklfs: wrote %u blocks (%u KB) to %s\n"
            "       inodes used: %u / %u\n"
-           "       data blocks: %u\n",
-           used_blocks, used_blocks * LFS_BLOCK_SIZE / 1024, out,
-           next_inode, inode_count, next_data);
+           "       data blocks: %u  free: %u\n",
+           padded_blocks, padded_blocks * LFS_BLOCK_SIZE / 1024, out,
+           next_inode, inode_count, next_data, EXTRA_FREE_BLOCKS);
     return 0;
 }

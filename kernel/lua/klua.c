@@ -2,11 +2,18 @@
 #include "font8x8.h"
 #include "../cpu/serial.h"
 #include "../cpu/keyboard.h"
+#include "../cpu/io.h"
 #include "../vfs/vfs.h"
 #include "../mm/heap.h"
+#include "../mm/phys.h"
 #include "../cpu/pit.h"
 #include "../cpu/mouse.h"
 #include "../wm/wm.h"
+#include "../ipc/msgqueue.h"
+#include "../proc/process.h"
+#include "../proc/scheduler.h"
+#include "../audio/audio.h"
+#include "../disk/disk.h"
 #include "../lua/lua.h"
 #include "../lua/lauxlib.h"
 #include "../lua/lualib.h"
@@ -16,7 +23,9 @@
 static uint32_t        *gfx_fb  = 0;
 static uint32_t         gfx_w   = 0;
 static uint32_t         gfx_h   = 0;
+static uint32_t         gfx_pal_buf[32];        /* mutable copy of system palette */
 static const uint32_t  *gfx_pal = 0;
+static wm_win_t        *current_draw_win = 0;  /* window currently targeted by gfx draws */
 
 static lua_State *L = 0;
 
@@ -52,6 +61,9 @@ static int l_cls(lua_State *ls) {
     uint32_t col = _color((int)luaL_optinteger(ls, 1, 0));
     uint32_t total = gfx_w * gfx_h;
     for (uint32_t i = 0; i < total; i++) gfx_fb[i] = col;
+    /* If drawing to the screen buffer (not a window), mark whole screen dirty */
+    if (!current_draw_win)
+        wm_mark_dirty(0, 0, (int)gfx_w, (int)gfx_h);
     return 0;
 }
 
@@ -92,17 +104,379 @@ static int l_print(lua_State *ls) {
     return 0;
 }
 
+/* gfx.line(x0, y0, x1, y1, color_index) — Bresenham line */
+static int l_line(lua_State *ls) {
+    int x0  = (int)luaL_checkinteger(ls, 1);
+    int y0  = (int)luaL_checkinteger(ls, 2);
+    int x1  = (int)luaL_checkinteger(ls, 3);
+    int y1  = (int)luaL_checkinteger(ls, 4);
+    uint32_t col = _color((int)luaL_checkinteger(ls, 5));
+    int dx = x1>x0 ? x1-x0 : x0-x1, dy = y1>y0 ? y1-y0 : y0-y1;
+    int sx = x0 < x1 ? 1 : -1, sy = y0 < y1 ? 1 : -1;
+    int err = dx - dy;
+    for (;;) {
+        _pset(x0, y0, col);
+        if (x0 == x1 && y0 == y1) break;
+        int e2 = 2 * err;
+        if (e2 > -dy) { err -= dy; x0 += sx; }
+        if (e2 <  dx) { err += dx; y0 += sy; }
+    }
+    return 0;
+}
+
+/* gfx.circ(cx, cy, r, color_index) — Bresenham circle outline */
+static int l_circ(lua_State *ls) {
+    int cx = (int)luaL_checkinteger(ls, 1);
+    int cy = (int)luaL_checkinteger(ls, 2);
+    int r  = (int)luaL_checkinteger(ls, 3);
+    uint32_t col = _color((int)luaL_checkinteger(ls, 4));
+    int x = 0, y = r, d = 1 - r;
+    while (x <= y) {
+        _pset(cx+x,cy+y,col); _pset(cx-x,cy+y,col);
+        _pset(cx+x,cy-y,col); _pset(cx-x,cy-y,col);
+        _pset(cx+y,cy+x,col); _pset(cx-y,cy+x,col);
+        _pset(cx+y,cy-x,col); _pset(cx-y,cy-x,col);
+        if (d < 0) d += 2*x + 3;
+        else       { d += 2*(x-y) + 5; y--; }
+        x++;
+    }
+    return 0;
+}
+
+/* gfx.circfill(cx, cy, r, color_index) — filled circle */
+static int l_circfill(lua_State *ls) {
+    int cx = (int)luaL_checkinteger(ls, 1);
+    int cy = (int)luaL_checkinteger(ls, 2);
+    int r  = (int)luaL_checkinteger(ls, 3);
+    uint32_t col = _color((int)luaL_checkinteger(ls, 4));
+    int x = 0, y = r, d = 1 - r;
+    while (x <= y) {
+        for (int i = cx-y; i <= cx+y; i++) { _pset(i, cy+x, col); _pset(i, cy-x, col); }
+        for (int i = cx-x; i <= cx+x; i++) { _pset(i, cy+y, col); _pset(i, cy-y, col); }
+        if (d < 0) d += 2*x + 3;
+        else       { d += 2*(x-y) + 5; y--; }
+        x++;
+    }
+    return 0;
+}
+
 /* gfx.pget(x, y) → color_index (approximate — returns palette index 0) */
 static int l_pget(lua_State *ls) {
     (void)ls; lua_pushinteger(ls, 0); return 1;
+}
+
+/* gfx.set_pal(idx, r, g, b) — set palette entry (idx 0–31, r/g/b 0–255) */
+static int l_set_pal(lua_State *ls) {
+    int idx = (int)luaL_checkinteger(ls, 1) & 31;
+    int r   = (int)luaL_checkinteger(ls, 2) & 0xFF;
+    int g   = (int)luaL_checkinteger(ls, 3) & 0xFF;
+    int b   = (int)luaL_checkinteger(ls, 4) & 0xFF;
+    gfx_pal_buf[idx] = ((uint32_t)r << 16) | ((uint32_t)g << 8) | (uint32_t)b;
+    return 0;
+}
+
+/* gfx.get_pal(idx) → r, g, b */
+static int l_get_pal(lua_State *ls) {
+    int idx = (int)luaL_checkinteger(ls, 1) & 31;
+    uint32_t col = gfx_pal_buf[idx];
+    lua_pushinteger(ls, (col >> 16) & 0xFF);
+    lua_pushinteger(ls, (col >>  8) & 0xFF);
+    lua_pushinteger(ls, (col      ) & 0xFF);
+    return 3;
+}
+
+/* gfx.reset_pal() — restore system palette */
+static int l_reset_pal(lua_State *ls) {
+    (void)ls;
+    /* Re-init from kernel.c's palette — not stored here; set all to 0 as fallback.
+       Apps that care should save/restore themselves. */
+    return 0;
 }
 
 /* gfx.screen_w() / gfx.screen_h() */
 static int l_screen_w(lua_State *ls) { lua_pushinteger(ls, (lua_Integer)gfx_w); return 1; }
 static int l_screen_h(lua_State *ls) { lua_pushinteger(ls, (lua_Integer)gfx_h); return 1; }
 
-/* pit_ticks() global */
+/* pit_ticks() global (kept for back-compat) */
 static int l_pit_ticks(lua_State *ls) { lua_pushinteger(ls, (lua_Integer)pit_ticks()); return 1; }
+
+/* ── sys API ────────────────────────────────────────────────────────────── */
+/* sys.ticks() → integer tick count */
+static int l_sys_ticks(lua_State *ls) { lua_pushinteger(ls, (lua_Integer)pit_ticks()); return 1; }
+
+/* sys.mem() → free_bytes, total_bytes */
+static int l_sys_mem(lua_State *ls) {
+    lua_pushinteger(ls, (lua_Integer)phys_free_count()  * PAGE_SIZE);
+    lua_pushinteger(ls, (lua_Integer)phys_total_count() * PAGE_SIZE);
+    return 2;
+}
+
+/* sys.proc_alloc(name) → pid */
+static int l_sys_proc_alloc(lua_State *ls) {
+    const char *name = luaL_checkstring(ls, 1);
+    lua_pushinteger(ls, proc_alloc(name));
+    return 1;
+}
+
+/* sys.proc_free(pid) */
+static int l_sys_proc_free(lua_State *ls) {
+    proc_free((int)luaL_checkinteger(ls, 1));
+    return 0;
+}
+
+/* sys.proc_info(pid) → {name, cpu_ticks, overruns, uptime_ticks} or nil */
+static int l_sys_proc_info(lua_State *ls) {
+    int pid = (int)luaL_checkinteger(ls, 1);
+    proc_t *p = proc_get(pid);
+    if (!p) { lua_pushnil(ls); return 1; }
+    lua_newtable(ls);
+    lua_pushstring(ls, p->name);    lua_setfield(ls, -2, "name");
+    lua_pushinteger(ls, (lua_Integer)p->cpu_ticks);  lua_setfield(ls, -2, "cpu_ticks");
+    lua_pushinteger(ls, (lua_Integer)p->overruns);   lua_setfield(ls, -2, "overruns");
+    lua_pushinteger(ls, (lua_Integer)(pit_ticks() - p->spawn_tick));
+    lua_setfield(ls, -2, "uptime_ticks");
+    return 1;
+}
+
+/* sys.sched_begin(pid, name) */
+static int l_sys_sched_begin(lua_State *ls) {
+    int pid = (int)luaL_checkinteger(ls, 1);
+    const char *name = luaL_optstring(ls, 2, "?");
+    sched_begin(ls, pid, name);
+    return 0;
+}
+
+/* sys.sched_end(pid) */
+static int l_sys_sched_end(lua_State *ls) {
+    int pid = (int)luaL_checkinteger(ls, 1);
+    sched_end(ls, pid);
+    return 0;
+}
+
+/* sys.disk_ready() → bool */
+static int l_sys_disk_ready(lua_State *ls) {
+    lua_pushboolean(ls, disk_ready());
+    return 1;
+}
+
+/* sys.save() → bool, errmsg
+   Snapshot the in-memory VFS image to the HDD LFS partition. */
+static int l_sys_save(lua_State *ls) {
+    if (disk_drive() < 0) { /* no drive configured at all */
+        lua_pushboolean(ls, 0);
+        lua_pushstring(ls, "no disk");
+        return 2;
+    }
+    void    *base = vfs_get_base();
+    uint32_t size = vfs_get_size();
+    if (!base || !size) {
+        lua_pushboolean(ls, 0);
+        lua_pushstring(ls, "VFS not mounted");
+        return 2;
+    }
+    /* Round size up to next 512-byte boundary */
+    uint32_t aligned = (size + 511) & ~511u;
+    if (aligned > disk_lfs_size()) {
+        lua_pushboolean(ls, 0);
+        lua_pushstring(ls, "VFS too large for partition");
+        return 2;
+    }
+    int r = disk_lfs_write(base, 0, aligned);
+    lua_pushboolean(ls, r == 0);
+    if (r != 0) lua_pushstring(ls, "write error");
+    else        lua_pushnil(ls);
+    return 2;
+}
+
+/* sys.load() → bool, errmsg
+   Load the VFS image from HDD, replacing the current in-memory VFS.
+   Fails gracefully if no valid LFS magic is found on disk. */
+static int l_sys_load(lua_State *ls) {
+    if (!disk_ready()) {
+        lua_pushboolean(ls, 0);
+        lua_pushstring(ls, "disk not ready");
+        return 2;
+    }
+    uint32_t part_size = disk_lfs_size();
+    /* Read the superblock first to get the real image size */
+    uint8_t sb_buf[512];
+    if (disk_lfs_read(sb_buf, 0, 512) != 0) {
+        lua_pushboolean(ls, 0);
+        lua_pushstring(ls, "read error");
+        return 2;
+    }
+    /* Check magic */
+    if (sb_buf[0]!='L' || sb_buf[1]!='F' || sb_buf[2]!='S' || sb_buf[3]!='!') {
+        lua_pushboolean(ls, 0);
+        lua_pushstring(ls, "no LFS magic on disk");
+        return 2;
+    }
+    /* total_blocks is at offset 12 in the superblock (see lfs_super_t) */
+    uint32_t total_blocks = *(uint32_t *)(sb_buf + 12);
+    uint32_t image_size   = total_blocks * 512;
+    if (image_size > part_size || image_size < 512) {
+        lua_pushboolean(ls, 0);
+        lua_pushstring(ls, "bad superblock");
+        return 2;
+    }
+    /* Allocate a buffer and read the full image */
+    void *buf = kmalloc(image_size);
+    if (!buf) {
+        lua_pushboolean(ls, 0);
+        lua_pushstring(ls, "out of memory");
+        return 2;
+    }
+    /* Aligned read (image_size is already a multiple of 512) */
+    if (disk_lfs_read(buf, 0, image_size) != 0) {
+        kfree(buf);
+        lua_pushboolean(ls, 0);
+        lua_pushstring(ls, "read error");
+        return 2;
+    }
+    /* Reinitialise VFS from the new buffer */
+    vfs_init((uint32_t)(uintptr_t)buf, image_size);
+    lua_pushboolean(ls, 1);
+    lua_pushnil(ls);
+    return 2;
+}
+
+/* sys.shutdown() — power off.
+   QEMU: write 0x2000 to port 0x604 (Bochs/QEMU ACPI shutdown).
+   Real hardware fallback: ACPI S5 via port 0x4004 (common ICH chipset). */
+static int l_sys_shutdown(lua_State *ls) {
+    (void)ls;
+    /* QEMU / Bochs ACPI power-off */
+    outw(0x604, 0x2000);
+    /* ICH/PIIX ACPI power-off fallback (port varies; try common ones) */
+    outw(0x4004, 0x3400);
+    /* Spin forever if neither worked */
+    for (;;) { __asm__ volatile ("hlt"); }
+    return 0;
+}
+
+/* sys.reboot() — warm reboot via keyboard controller reset line. */
+static int l_sys_reboot(lua_State *ls) {
+    (void)ls;
+    /* Pulse the reset line via the 8042 keyboard controller */
+    outb(0x64, 0xFE);
+    /* Triple fault fallback */
+    for (;;) { __asm__ volatile ("hlt"); }
+    return 0;
+}
+
+static const luaL_Reg sys_lib[] = {
+    {"ticks",       l_sys_ticks},
+    {"mem",         l_sys_mem},
+    {"proc_alloc",  l_sys_proc_alloc},
+    {"proc_free",   l_sys_proc_free},
+    {"proc_info",   l_sys_proc_info},
+    {"sched_begin", l_sys_sched_begin},
+    {"sched_end",   l_sys_sched_end},
+    {"disk_ready",  l_sys_disk_ready},
+    {"save",        l_sys_save},
+    {"load",        l_sys_load},
+    {"shutdown",    l_sys_shutdown},
+    {"reboot",      l_sys_reboot},
+    {NULL, NULL}
+};
+
+/* ── ipc API ────────────────────────────────────────────────────────────── */
+/* ipc.open(name) — register a named queue for this app */
+static int l_ipc_open(lua_State *ls) {
+    const char *name = luaL_checkstring(ls, 1);
+    lua_pushboolean(ls, ipc_queue_open(name) == 0);
+    return 1;
+}
+
+/* ipc.close(name) */
+static int l_ipc_close(lua_State *ls) {
+    const char *name = luaL_checkstring(ls, 1);
+    ipc_queue_close(name);
+    return 0;
+}
+
+/* ipc.send(to, from, data) — data is any Lua value */
+static int l_ipc_send(lua_State *ls) {
+    const char *to   = luaL_checkstring(ls, 1);
+    const char *from = luaL_checkstring(ls, 2);
+    luaL_checkany(ls, 3);
+    lua_settop(ls, 3);          /* ensure exactly 3 args; data is at index 3 */
+    /* ipc_send pops the top value */
+    int r = ipc_send(ls, to, from);
+    lua_pushboolean(ls, r == 0);
+    return 1;
+}
+
+/* ipc.recv(name) → from, data  or  nil if empty */
+static int l_ipc_recv(lua_State *ls) {
+    const char *name = luaL_checkstring(ls, 1);
+    if (!ipc_recv(ls, name)) { lua_pushnil(ls); return 1; }
+    return 2; /* from_string, data already on stack */
+}
+
+/* ipc.pending(name) → count */
+static int l_ipc_pending(lua_State *ls) {
+    const char *name = luaL_checkstring(ls, 1);
+    lua_pushinteger(ls, ipc_pending(name));
+    return 1;
+}
+
+static const luaL_Reg ipc_lib[] = {
+    {"open",    l_ipc_open},
+    {"close",   l_ipc_close},
+    {"send",    l_ipc_send},
+    {"recv",    l_ipc_recv},
+    {"pending", l_ipc_pending},
+    {NULL, NULL}
+};
+
+/* ── audio API ──────────────────────────────────────────────────────────── */
+/* audio.set(ch, wave, freq, vol)
+   wave: 0=square 1=sawtooth 2=triangle 3=noise 4=off
+   freq: Hz, vol: 0–255 */
+static int l_audio_set(lua_State *ls) {
+    int ch   = (int)luaL_checkinteger(ls, 1);
+    int wave = (int)luaL_checkinteger(ls, 2);
+    int freq = (int)luaL_checkinteger(ls, 3);
+    int vol  = (int)luaL_checkinteger(ls, 4);
+    audio_set_channel(ch, (uint8_t)wave, (uint32_t)freq, (uint8_t)vol);
+    return 0;
+}
+
+/* audio.stop(ch) — stop one channel */
+static int l_audio_stop(lua_State *ls) {
+    audio_stop_channel((int)luaL_checkinteger(ls, 1));
+    return 0;
+}
+
+/* audio.stop_all() */
+static int l_audio_stop_all(lua_State *ls) {
+    (void)ls; audio_stop_all(); return 0;
+}
+
+/* audio.beep(freq) — PC speaker tone (0 = off) */
+static int l_audio_beep(lua_State *ls) {
+    uint32_t freq = (uint32_t)luaL_optinteger(ls, 1, 0);
+    pcspeaker_tone(freq);
+    return 0;
+}
+
+/* audio.refill() — manually refill AC97 DMA buffer (call from update loop) */
+static int l_audio_refill(lua_State *ls) {
+    (void)ls;
+    extern void audio_refill(void);
+    audio_refill();
+    return 0;
+}
+
+static const luaL_Reg audio_lib[] = {
+    {"set",      l_audio_set},
+    {"stop",     l_audio_stop},
+    {"stop_all", l_audio_stop_all},
+    {"beep",     l_audio_beep},
+    {"refill",   l_audio_refill},
+    {NULL, NULL}
+};
 
 /* ── input API ──────────────────────────────────────────────────────────── */
 typedef struct { const char *name; int code; } key_entry_t;
@@ -161,12 +535,17 @@ static const luaL_Reg input_lib[] = {
 };
 
 /* ── fs API ─────────────────────────────────────────────────────────────── */
-/* fs.read(path) → string or nil */
+/* fs.read(path) → string or nil  (binary-safe: uses pushlstring) */
 static int l_fs_read(lua_State *ls) {
     const char *path = luaL_checkstring(ls, 1);
-    char *buf = vfs_read_alloc(path);
-    if (!buf) { lua_pushnil(ls); return 1; }
-    lua_pushstring(ls, buf);
+    vfs_file_t *f = vfs_open(path);
+    if (!f) { lua_pushnil(ls); return 1; }
+    uint32_t sz = vfs_size(f);
+    char *buf = (char *)kmalloc(sz + 1);
+    if (!buf) { vfs_close(f); lua_pushnil(ls); return 1; }
+    vfs_read(f, 0, buf, sz);
+    vfs_close(f);
+    lua_pushlstring(ls, buf, sz);
     kfree(buf);
     return 1;
 }
@@ -196,9 +575,30 @@ static int l_fs_list(lua_State *ls) {
 /* fs.exists(path) → bool */
 static int l_fs_exists(lua_State *ls) {
     const char *path = luaL_checkstring(ls, 1);
-    vfs_file_t *f = vfs_open(path);
-    if (f) { vfs_close(f); lua_pushboolean(ls, 1); }
-    else lua_pushboolean(ls, 0);
+    lua_pushboolean(ls, vfs_exists(path));
+    return 1;
+}
+
+/* fs.write(path, data) → bool */
+static int l_fs_write(lua_State *ls) {
+    const char *path = luaL_checkstring(ls, 1);
+    size_t len;
+    const char *data = luaL_checklstring(ls, 2, &len);
+    lua_pushboolean(ls, vfs_write(path, data, (uint32_t)len) == 0);
+    return 1;
+}
+
+/* fs.mkdir(path) → bool */
+static int l_fs_mkdir(lua_State *ls) {
+    const char *path = luaL_checkstring(ls, 1);
+    lua_pushboolean(ls, vfs_mkdir(path) == 0);
+    return 1;
+}
+
+/* fs.delete(path) → bool */
+static int l_fs_delete(lua_State *ls) {
+    const char *path = luaL_checkstring(ls, 1);
+    lua_pushboolean(ls, vfs_delete(path) == 0);
     return 1;
 }
 
@@ -224,6 +624,20 @@ static int l_wm_open(lua_State *ls) {
 /* wm.close(win) */
 static int l_wm_close(lua_State *ls) {
     wm_win_t *win = (wm_win_t *)lua_touserdata(ls, 1);
+    /* If this window was being drawn to (e.g. killed mid-draw by scheduler),
+       restore gfx back to the screen back buffer now.  Without this, gfx_fb
+       keeps pointing into the freed window buffer, causing corrupted draws and
+       gfx.cls() won't mark the screen dirty (it checks current_draw_win). */
+    if (win && current_draw_win == win) {
+        current_draw_win = 0;
+        if (gfx_screen_fb) {
+            gfx_fb = gfx_screen_fb;
+            gfx_w  = gfx_screen_w;
+            gfx_h  = gfx_screen_h;
+        }
+        /* Force a full-screen redraw so stale pixels are overwritten */
+        wm_mark_dirty(0, 0, (int)gfx_w, (int)gfx_h);
+    }
     wm_close(win);
     return 0;
 }
@@ -232,7 +646,6 @@ static int l_wm_close(lua_State *ls) {
 static int l_wm_focus(lua_State *ls) {
     wm_win_t *win = (wm_win_t *)lua_touserdata(ls, 1);
     if (!win || !win->fb) return 0;
-    /* save screen state once */
     if (!gfx_screen_fb) {
         gfx_screen_fb = gfx_fb;
         gfx_screen_w  = gfx_w;
@@ -241,13 +654,19 @@ static int l_wm_focus(lua_State *ls) {
     gfx_fb = win->fb;
     gfx_w  = (uint32_t)win->w;
     gfx_h  = (uint32_t)win->h;
+    current_draw_win = win;
     return 0;
 }
 
-/* wm.unfocus() — restore gfx to screen backbuf */
+/* wm.unfocus() — restore gfx to screen backbuf, mark window dirty */
 static int l_wm_unfocus(lua_State *ls) {
     (void)ls;
     if (gfx_screen_fb) {
+        if (current_draw_win) {
+            current_draw_win->dirty = 1;
+            wm_mark_win_dirty(current_draw_win);
+            current_draw_win = 0;
+        }
         gfx_fb = gfx_screen_fb;
         gfx_w  = gfx_screen_w;
         gfx_h  = gfx_screen_h;
@@ -385,17 +804,26 @@ static const luaL_Reg fs_lib[] = {
     {"read",   l_fs_read},
     {"list",   l_fs_list},
     {"exists", l_fs_exists},
+    {"write",  l_fs_write},
+    {"mkdir",  l_fs_mkdir},
+    {"delete", l_fs_delete},
     {NULL, NULL}
 };
 
 static const luaL_Reg gfx_lib[] = {
-    {"pset",     l_pset},
-    {"cls",      l_cls},
-    {"rect",     l_rect},
-    {"print",    l_print},
-    {"pget",     l_pget},
-    {"screen_w", l_screen_w},
-    {"screen_h", l_screen_h},
+    {"pset",      l_pset},
+    {"cls",       l_cls},
+    {"rect",      l_rect},
+    {"line",      l_line},
+    {"circ",      l_circ},
+    {"circfill",  l_circfill},
+    {"print",     l_print},
+    {"pget",      l_pget},
+    {"screen_w",  l_screen_w},
+    {"screen_h",  l_screen_h},
+    {"set_pal",   l_set_pal},
+    {"get_pal",   l_get_pal},
+    {"reset_pal", l_reset_pal},
     {NULL, NULL}
 };
 
@@ -405,7 +833,9 @@ void klua_init(uint32_t *fb, uint32_t fb_w, uint32_t fb_h,
     gfx_fb  = fb;
     gfx_w   = fb_w;
     gfx_h   = fb_h;
-    gfx_pal = pal;
+    /* Copy palette into mutable buffer so Lua can edit it */
+    for (int i = 0; i < 32; i++) gfx_pal_buf[i] = pal ? pal[i] : 0;
+    gfx_pal = gfx_pal_buf;
 
     L = lua_newstate(lua_kernel_alloc, 0);
     if (!L) { serial_puts("[LUA] lua_newstate failed\n"); return; }
@@ -437,8 +867,26 @@ void klua_init(uint32_t *fb, uint32_t fb_w, uint32_t fb_h,
     lua_pushinteger(L, (lua_Integer)fb_w); lua_setglobal(L, "SCREEN_W");
     lua_pushinteger(L, (lua_Integer)fb_h); lua_setglobal(L, "SCREEN_H");
 
-    /* pit_ticks global function */
+    /* pit_ticks global function (kept for back-compat) */
     lua_pushcfunction(L, l_pit_ticks); lua_setglobal(L, "pit_ticks");
+
+    /* Register sys table (spawn/kill/ps added from main.lua) */
+    luaL_newlib(L, sys_lib);
+    lua_setglobal(L, "sys");
+
+    /* Register ipc table */
+    ipc_init();
+    luaL_newlib(L, ipc_lib);
+    lua_setglobal(L, "ipc");
+
+    /* Init process table and scheduler */
+    proc_init();
+    sched_init();
+
+    /* Register audio table and init subsystem */
+    audio_init();
+    luaL_newlib(L, audio_lib);
+    lua_setglobal(L, "audio");
 
     serial_puts("[LUA] ready\n");
 }

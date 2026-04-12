@@ -13,7 +13,14 @@ typedef struct wm_win {
     int       z;         /* z-order; higher = on top */
     int       open;
     int       minimized;
+    int       dirty;     /* 1 = fb changed since last composite */
 } wm_win_t;
+
+/* Dirty rectangle — bounding box of all changed screen regions this frame */
+typedef struct {
+    int x0, y0, x1, y1;  /* inclusive pixel coords */
+    int valid;            /* 0 = nothing dirty yet  */
+} wm_dirty_t;
 
 void      wm_init      (void);
 wm_win_t *wm_open      (const char *title, int x, int y, int w, int h);
@@ -25,8 +32,14 @@ void      wm_set_focused  (wm_win_t *win);
 void      wm_set_minimized(wm_win_t *win, int v);
 int       wm_is_minimized (wm_win_t *win);
 void      wm_resize       (wm_win_t *win, int w, int h);
+void      wm_mark_dirty   (int x, int y, int w, int h);
+void      wm_mark_win_dirty(wm_win_t *win);
 
 /* Composite all open windows onto dst (the back buffer) */
 void wm_composite  (uint32_t *dst, int sw, int sh, const uint32_t *pal);
 /* Draw mouse cursor on top of dst */
 void wm_draw_cursor(uint32_t *dst, int sw, int sh, const uint32_t *pal);
+
+/* Query and clear the dirty rect after present() */
+wm_dirty_t wm_get_dirty (void);
+void        wm_clear_dirty(void);

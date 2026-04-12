@@ -5,10 +5,11 @@
 #include <stdint.h>
 
 /* ── Internal state ─────────────────────────────────────────────────────────*/
-static uint8_t      *lfs_base  = 0;
-static lfs_super_t  *sb        = 0;
-static lfs_inode_t  *inode_tbl = 0;  /* pointer into image */
-static uint32_t      inode_cnt = 0;
+static uint8_t      *lfs_base   = 0;
+static lfs_super_t  *sb         = 0;
+static lfs_inode_t  *inode_tbl  = 0;  /* pointer into image */
+static uint32_t      inode_cnt  = 0;
+static uint32_t      lfs_cap_blocks = 0; /* actual blocks in our buffer */
 
 struct vfs_file {
     lfs_inode_t *inode;
@@ -36,12 +37,12 @@ static uint32_t kstrlen(const char *s) {
 
 /* ── Init ───────────────────────────────────────────────────────────────────*/
 void vfs_init(uint32_t lfs_phys_addr, uint32_t lfs_size) {
-    /* Copy image into heap so future kmalloc can't overwrite the initrd */
-    lfs_base = (uint8_t *)kmalloc(lfs_size);
-    if (!lfs_base) { serial_puts("[VFS] out of memory\n"); return; }
-    uint8_t *src = (uint8_t *)lfs_phys_addr;
-    for (uint32_t i = 0; i < lfs_size; i++) lfs_base[i] = src[i];
-    sb        = (lfs_super_t *)lfs_base;
+    /* Use the physical address directly — initrd is already protected by
+       phys_reserve so the heap allocator will never touch those frames. */
+    if (lfs_size < LFS_BLOCK_SIZE) { serial_puts("[VFS] image too small\n"); return; }
+    lfs_base       = (uint8_t *)lfs_phys_addr;
+    lfs_cap_blocks = lfs_size / LFS_BLOCK_SIZE;
+    sb             = (lfs_super_t *)lfs_base;
 
     if (sb->magic[0] != 'L' || sb->magic[1] != 'F' ||
         sb->magic[2] != 'S' || sb->magic[3] != '!') {
@@ -58,6 +59,10 @@ void vfs_init(uint32_t lfs_phys_addr, uint32_t lfs_size) {
     serial_hex(sb->data_start);
     serial_puts("\n");
 }
+
+/* ── Image accessors ────────────────────────────────────────────────────────*/
+void *vfs_get_base(void) { return lfs_base; }
+uint32_t vfs_get_size(void) { return lfs_cap_blocks * LFS_BLOCK_SIZE; }
 
 /* ── Path resolution ────────────────────────────────────────────────────────*/
 /* Find the inode for a path component `name` whose parent is `parent_idx`.
@@ -93,6 +98,79 @@ static uint32_t resolve(const char *path) {
         if (cur == (uint32_t)-1) return (uint32_t)-1;
     }
     return cur;
+}
+
+/* ── Write helpers ──────────────────────────────────────────────────────────*/
+
+/* Returns 1 if block blk is referenced by any inode */
+static int block_in_use(uint32_t blk) {
+    if (blk < sb->data_start) return 1;
+    for (uint32_t i = 0; i < inode_cnt; i++) {
+        lfs_inode_t *n = &inode_tbl[i];
+        if (n->type == LFS_TYPE_FREE) continue;
+        for (int j = 0; j < LFS_DIRECT; j++)
+            if (n->direct[j] == blk) return 1;
+        if (n->indirect == blk) return 1;
+        if (n->indirect) {
+            uint32_t *ind = (uint32_t *)block_ptr(n->indirect);
+            uint32_t entries = LFS_BLOCK_SIZE / sizeof(uint32_t);
+            for (uint32_t k = 0; k < entries; k++)
+                if (ind[k] == blk) return 1;
+        }
+    }
+    return 0;
+}
+
+static uint32_t alloc_block(void) {
+    for (uint32_t b = sb->data_start; b < lfs_cap_blocks; b++)
+        if (!block_in_use(b)) return b;
+    return 0;
+}
+
+static uint32_t alloc_inode(void) {
+    for (uint32_t i = 1; i < inode_cnt; i++)
+        if (inode_tbl[i].type == LFS_TYPE_FREE) return i;
+    return (uint32_t)-1;
+}
+
+static void free_inode_blocks(lfs_inode_t *n) {
+    for (int j = 0; j < LFS_DIRECT; j++) {
+        if (!n->direct[j]) continue;
+        uint8_t *b = (uint8_t *)block_ptr(n->direct[j]);
+        for (int k = 0; k < LFS_BLOCK_SIZE; k++) b[k] = 0;
+        n->direct[j] = 0;
+    }
+    if (n->indirect) {
+        uint32_t *ind = (uint32_t *)block_ptr(n->indirect);
+        uint32_t entries = LFS_BLOCK_SIZE / sizeof(uint32_t);
+        for (uint32_t k = 0; k < entries; k++) {
+            if (!ind[k]) continue;
+            uint8_t *b = (uint8_t *)block_ptr(ind[k]);
+            for (int m = 0; m < LFS_BLOCK_SIZE; m++) b[m] = 0;
+            ind[k] = 0;
+        }
+        uint8_t *ib = (uint8_t *)block_ptr(n->indirect);
+        for (int k = 0; k < LFS_BLOCK_SIZE; k++) ib[k] = 0;
+        n->indirect = 0;
+    }
+}
+
+/* Split "/a/b/c" → parent="/a/b", name="c". Returns 0 on success. */
+static int split_path(const char *path,
+                      char *parent_out, char *name_out) {
+    uint32_t len = kstrlen(path);
+    if (!len || path[0] != '/') return -1;
+    int last = -1;
+    for (uint32_t i = 0; i < len; i++)
+        if (path[i] == '/') last = (int)i;
+    if (last < 0) return -1;
+    uint32_t nlen = len - (uint32_t)last - 1;
+    if (nlen == 0 || nlen >= VFS_MAX_NAME) return -1;
+    if (last == 0) { parent_out[0] = '/'; parent_out[1] = '\0'; }
+    else { for (int i = 0; i < last; i++) parent_out[i] = path[i]; parent_out[last] = '\0'; }
+    for (uint32_t i = 0; i < nlen; i++) name_out[i] = path[last + 1 + i];
+    name_out[nlen] = '\0';
+    return 0;
 }
 
 /* ── Public API ─────────────────────────────────────────────────────────────*/
@@ -196,4 +274,113 @@ int vfs_list(const char *path,
         count++;
     }
     return count;
+}
+
+int vfs_exists(const char *path) {
+    return resolve(path) != (uint32_t)-1;
+}
+
+int vfs_mkdir(const char *path) {
+    if (!path || !sb) return -1;
+    char parent[VFS_MAX_PATH], name[VFS_MAX_NAME];
+    if (split_path(path, parent, name) < 0) return -1;
+
+    uint32_t parent_idx = (parent[0]=='/' && parent[1]=='\0') ? 0 : resolve(parent);
+    if (parent_idx == (uint32_t)-1) return -1;
+    if (find_child(parent_idx, name) != (uint32_t)-1) return -1; /* already exists */
+
+    uint32_t idx = alloc_inode();
+    if (idx == (uint32_t)-1) return -1;
+    lfs_inode_t *n = &inode_tbl[idx];
+    n->type     = LFS_TYPE_DIR;
+    n->parent   = parent_idx;
+    n->size     = 0;
+    n->indirect = 0;
+    for (int j = 0; j < LFS_DIRECT; j++) n->direct[j] = 0;
+    uint32_t nlen = kstrlen(name);
+    for (uint32_t i = 0; i <= nlen; i++) n->name[i] = name[i];
+    return 0;
+}
+
+int vfs_write(const char *path, const void *data, uint32_t len) {
+    if (!path || !sb) return -1;
+    char parent[VFS_MAX_PATH], name[VFS_MAX_NAME];
+    if (split_path(path, parent, name) < 0) return -1;
+
+    uint32_t parent_idx = (parent[0]=='/' && parent[1]=='\0') ? 0 : resolve(parent);
+    if (parent_idx == (uint32_t)-1) return -1;
+
+    /* Find or create inode */
+    uint32_t existing = find_child(parent_idx, name);
+    lfs_inode_t *n;
+    if (existing != (uint32_t)-1) {
+        n = get_inode(existing);
+        if (!n || n->type != LFS_TYPE_FILE) return -1;
+        free_inode_blocks(n);
+    } else {
+        uint32_t idx = alloc_inode();
+        if (idx == (uint32_t)-1) return -1;
+        n = &inode_tbl[idx];
+        n->type     = LFS_TYPE_FILE;
+        n->parent   = parent_idx;
+        n->indirect = 0;
+        for (int j = 0; j < LFS_DIRECT; j++) n->direct[j] = 0;
+        uint32_t nlen = kstrlen(name);
+        for (uint32_t i = 0; i <= nlen; i++) n->name[i] = name[i];
+    }
+    n->size = 0;
+
+    /* Write blocks */
+    uint32_t written = 0, blk_idx = 0;
+    while (written < len) {
+        uint32_t chunk = len - written;
+        if (chunk > LFS_BLOCK_SIZE) chunk = LFS_BLOCK_SIZE;
+
+        /* Allocate indirect block before data block so alloc sees it as used */
+        if (blk_idx >= LFS_DIRECT && !n->indirect) {
+            n->indirect = alloc_block();
+            if (!n->indirect) return -1;
+            uint8_t *ib = (uint8_t *)block_ptr(n->indirect);
+            for (int k = 0; k < LFS_BLOCK_SIZE; k++) ib[k] = 0;
+        }
+
+        uint32_t blk = alloc_block();
+        if (!blk) return -1;
+
+        uint8_t *dst = (uint8_t *)block_ptr(blk);
+        for (int k = 0; k < LFS_BLOCK_SIZE; k++) dst[k] = 0;
+        const uint8_t *src = (const uint8_t *)data + written;
+        for (uint32_t k = 0; k < chunk; k++) dst[k] = src[k];
+
+        if (blk_idx < LFS_DIRECT) {
+            n->direct[blk_idx] = blk;
+        } else {
+            uint32_t *ind = (uint32_t *)block_ptr(n->indirect);
+            ind[blk_idx - LFS_DIRECT] = blk;
+        }
+        written += chunk;
+        blk_idx++;
+    }
+    n->size = len;
+    return 0;
+}
+
+int vfs_delete(const char *path) {
+    if (!path || !sb) return -1;
+    uint32_t idx = resolve(path);
+    if (idx == (uint32_t)-1 || idx == 0) return -1; /* can't delete root */
+    lfs_inode_t *n = get_inode(idx);
+    if (!n) return -1;
+    /* Refuse to delete non-empty directories */
+    if (n->type == LFS_TYPE_DIR) {
+        for (uint32_t i = 1; i < inode_cnt; i++) {
+            if (i == idx) continue;
+            lfs_inode_t *c = get_inode(i);
+            if (c && c->type != LFS_TYPE_FREE && c->parent == idx) return -1;
+        }
+    } else {
+        free_inode_blocks(n);
+    }
+    n->type = LFS_TYPE_FREE;
+    return 0;
 }

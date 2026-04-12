@@ -39,3 +39,20 @@ int vfs_list(const char *path,
 /* Read entire file into a heap-allocated, NUL-terminated buffer.
    Caller must kfree() the result. Returns NULL on error. */
 char *vfs_read_alloc(const char *path);
+
+/* Returns 1 if path exists (file or directory), 0 otherwise */
+int vfs_exists(const char *path);
+
+/* Write data to path (creates or overwrites). Returns 0 on success. */
+int vfs_write(const char *path, const void *data, uint32_t len);
+
+/* Create a directory. Returns 0 on success. */
+int vfs_mkdir(const char *path);
+
+/* Delete a file or empty directory. Returns 0 on success. */
+int vfs_delete(const char *path);
+
+/* Return a pointer to the raw in-memory LFS image and its byte size.
+   The pointer is valid until vfs_init() is called again. */
+void    *vfs_get_base(void);
+uint32_t vfs_get_size(void);

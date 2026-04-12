@@ -5,12 +5,18 @@
 *.img
 *.lfs
 
-# Host tools (built from source)
+# Host tools (compiled binaries)
 tools/mklfs
 tools/mklfs.exe
+tools/lfs_inspect
+tools/lfs_inspect.exe
+tools/mkdisk
+tools/mkdisk.exe
+tools/test_vfs
+tools/test_vfs.exe
 
 # ISO staging directory
 iso/
 
-# Debug screenshots
-*.png
+# Screenshots (add manually when ready)
+docs/screenshot.png

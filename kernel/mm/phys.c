@@ -91,6 +91,24 @@ void phys_reserve(uint32_t start, uint32_t end) {
     }
 }
 
+uint32_t phys_alloc_contig(uint32_t n) {
+    if (!n) return 0;
+    for (uint32_t f = 1; f + n <= total_frames; f++) {
+        uint32_t k;
+        for (k = 0; k < n; k++)
+            if (frame_used(f + k)) break;
+        if (k == n) {
+            for (uint32_t i = 0; i < n; i++) {
+                frame_set(f + i);
+                free_count--;
+            }
+            return f * PAGE_SIZE;
+        }
+        f += k; /* skip past the used frame we found */
+    }
+    return 0;
+}
+
 void phys_free(uint32_t addr) {
     uint32_t f = addr / PAGE_SIZE;
     if (f < MAX_FRAMES && frame_used(f)) {

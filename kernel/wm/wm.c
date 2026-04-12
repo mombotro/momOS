@@ -30,6 +30,34 @@ static const uint8_t cursor_mask[19][12] = {
 static wm_win_t  wins[WM_MAX_WINS];
 static int       next_z = 1;
 static wm_win_t *focused_win = 0;
+static wm_dirty_t dirty = {0,0,0,0,0};
+
+/* Expand dirty rect to include region (x,y,w,h) */
+void wm_mark_dirty(int x, int y, int w, int h) {
+    int x1 = x + w - 1, y1 = y + h - 1;
+    if (!dirty.valid) {
+        dirty.x0 = x; dirty.y0 = y; dirty.x1 = x1; dirty.y1 = y1;
+        dirty.valid = 1;
+    } else {
+        if (x  < dirty.x0) dirty.x0 = x;
+        if (y  < dirty.y0) dirty.y0 = y;
+        if (x1 > dirty.x1) dirty.x1 = x1;
+        if (y1 > dirty.y1) dirty.y1 = y1;
+    }
+}
+
+/* Mark a window's full chrome area (title bar + client) dirty */
+void wm_mark_win_dirty(wm_win_t *win) {
+    if (!win || !win->open || win->minimized) return;
+    int bx = win->x - WM_BORDER - 1;
+    int by = win->y - WM_TITLE_H - WM_BORDER - 1;
+    int bw = win->w + WM_BORDER * 2 + 2;
+    int bh = win->h + WM_TITLE_H + WM_BORDER * 2 + 2;
+    wm_mark_dirty(bx, by, bw, bh);
+}
+
+wm_dirty_t wm_get_dirty(void)  { return dirty; }
+void wm_clear_dirty(void)      { dirty.valid = 0; }
 
 void wm_init(void) {
     for (int i = 0; i < WM_MAX_WINS; i++) wins[i].open = 0;
@@ -39,7 +67,6 @@ wm_win_t *wm_open(const char *title, int x, int y, int w, int h) {
     for (int i = 0; i < WM_MAX_WINS; i++) {
         if (wins[i].open) continue;
         wm_win_t *win = &wins[i];
-        /* copy title */
         int j = 0;
         while (title[j] && j < 63) { win->title[j] = title[j]; j++; }
         win->title[j] = '\0';
@@ -47,22 +74,28 @@ wm_win_t *wm_open(const char *title, int x, int y, int w, int h) {
         win->fb = (uint32_t *)kmalloc((uint32_t)(w * h) * sizeof(uint32_t));
         win->z = next_z++;
         win->open = 1;
-        /* clear fb to black */
+        win->dirty = 1;
         for (int k = 0; k < w * h; k++) win->fb[k] = 0;
+        wm_mark_win_dirty(win);
         return win;
     }
-    return 0; /* no free slots */
+    return 0;
 }
 
 void wm_close(wm_win_t *win) {
     if (!win) return;
+    wm_mark_win_dirty(win);   /* mark old position dirty before closing */
     kfree(win->fb);
     win->fb = 0;
     win->open = 0;
 }
 
 void wm_move(wm_win_t *win, int x, int y) {
-    if (win) { win->x = x; win->y = y; }
+    if (!win) return;
+    wm_mark_win_dirty(win);   /* old position */
+    win->x = x; win->y = y;
+    wm_mark_win_dirty(win);   /* new position */
+    win->dirty = 1;
 }
 
 void wm_raise(wm_win_t *win) {
@@ -75,10 +108,13 @@ int  wm_is_minimized (wm_win_t *win) { return win ? win->minimized : 0; }
 
 void wm_resize(wm_win_t *win, int w, int h) {
     if (!win) return;
+    wm_mark_win_dirty(win);   /* old bounds */
     kfree(win->fb);
     win->w = w; win->h = h;
     win->fb = (uint32_t *)kmalloc((uint32_t)(w * h) * sizeof(uint32_t));
     for (int k = 0; k < w * h; k++) win->fb[k] = 0;
+    wm_mark_win_dirty(win);   /* new bounds */
+    win->dirty = 1;
 }
 
 void wm_retitle(wm_win_t *win, const char *title) {
@@ -168,8 +204,13 @@ void wm_composite(uint32_t *dst, int sw, int sh, const uint32_t *pal) {
     for (int i = 0; i < n; i++) {
         wm_win_t *win = &wins[order[i]];
 
-        /* Minimized windows are hidden entirely — only appear in taskbar */
         if (win->minimized) continue;
+
+        /* Mark dirty if this window changed */
+        if (win->dirty) {
+            wm_mark_win_dirty(win);
+            win->dirty = 0;
+        }
 
         int bx = win->x - WM_BORDER;
         int by = win->y - WM_TITLE_H - WM_BORDER;
@@ -214,5 +255,12 @@ void wm_composite(uint32_t *dst, int sw, int sh, const uint32_t *pal) {
 }
 
 void wm_draw_cursor(uint32_t *dst, int sw, int sh, const uint32_t *pal) {
+    static int prev_cx = -1, prev_cy = -1;
+    int cx = mouse_x(), cy = mouse_y();
+    /* Mark previous cursor position dirty */
+    if (prev_cx >= 0) wm_mark_dirty(prev_cx - 1, prev_cy - 1, 14, 22);
+    /* Mark new cursor position dirty */
+    wm_mark_dirty(cx - 1, cy - 1, 14, 22);
+    prev_cx = cx; prev_cy = cy;
     _draw_cursor(dst, sw, sh, pal);
 }

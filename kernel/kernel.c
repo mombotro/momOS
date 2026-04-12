@@ -9,7 +9,9 @@
 #include "mm/paging.h"
 #include "mm/heap.h"
 #include "vfs/vfs.h"
+#include "wm/wm.h"
 #include "lua/klua.h"
+#include "disk/disk.h"
 
 /* Exported by linker script */
 extern uint32_t _kernel_end;
@@ -104,9 +106,21 @@ static void cls(uint32_t color) {
     for (uint32_t i = 0; i < total; i++) backbuf[i] = color;
 }
 
-/* Blit back buffer to real framebuffer in one shot */
+/* Blit back buffer to real framebuffer — only dirty rows */
 static void present(void) {
-    for (uint32_t y = 0; y < fb_h; y++) {
+    wm_dirty_t d = wm_get_dirty();
+    wm_clear_dirty();
+
+    uint32_t y0, y1;
+    if (!d.valid) {
+        /* Nothing dirty — skip blit entirely */
+        return;
+    }
+    /* Clamp to screen bounds */
+    y0 = (d.y0 < 0)           ? 0      : (uint32_t)d.y0;
+    y1 = (d.y1 >= (int)fb_h)  ? fb_h-1 : (uint32_t)d.y1;
+
+    for (uint32_t y = y0; y <= y1; y++) {
         uint32_t *dst = (uint32_t *)(fb + y * fb_pitch);
         uint32_t *src = backbuf + y * fb_w;
         for (uint32_t x = 0; x < fb_w; x++) dst[x] = src[x];
@@ -230,6 +244,28 @@ void kernel_main(uint32_t magic, mb1_info_t *mb) {
     /* Quick VFS smoke test — list root */
     serial_puts("[VFS] root:\n");
     vfs_list("/", vfs_print_entry, 0);
+
+    /* Disk: probe ATA, look for LFS partition, load it if valid */
+    if (disk_init()) {
+        /* Read superblock to find actual image size */
+        static uint8_t sb_tmp[512];
+        if (disk_lfs_read(sb_tmp, 0, 512) == 0) {
+            uint32_t total_blks = *(uint32_t *)(sb_tmp + 12); /* sb->total_blocks offset */
+            uint32_t img_size   = total_blks * 512;
+            if (img_size >= 512 && img_size <= disk_lfs_size()) {
+                void *buf = kmalloc(img_size);
+                if (buf && disk_lfs_read(buf, 0, img_size) == 0) {
+                    serial_puts("[DISK] loading VFS from HDD (");
+                    serial_hex(img_size / 1024);
+                    serial_puts(" KB)\n");
+                    vfs_init((uint32_t)(uintptr_t)buf, img_size);
+                } else {
+                    if (buf) kfree(buf);
+                    serial_puts("[DISK] read failed, using initrd\n");
+                }
+            }
+        }
+    }
 
     /* Lua VM */
     klua_init(backbuf, fb_w, fb_h, pal);

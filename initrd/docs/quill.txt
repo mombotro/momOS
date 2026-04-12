@@ -1,0 +1,60 @@
+QUILL — code & text editor
+==========================
+
+OPENING FILES
+  Launch quill from the desktop or files app.
+  In files: press Enter on any non-lua file to open it.
+            press E on any file to edit it.
+  From terminal: run /apps/quill.lua
+
+FILE TABS
+  Up to 8 files open at once.
+  Click a tab at the top to switch.
+  A * before the name means unsaved changes.
+
+NAVIGATION
+  Arrow keys    move cursor
+  Home / End    start / end of line
+  Page Up/Down  scroll by one screen
+  Mouse click   not supported (use keys)
+
+EDITING
+  Type normally to insert text.
+  Backspace     delete character left
+  Enter         new line (auto-indents after then/do/function/repeat/else)
+  Tab           insert spaces OR cycle autocomplete suggestion
+
+AUTOCOMPLETE
+  Tab cycles through API suggestions when the cursor is on a word.
+  Suggestions include all built-in Lua globals and momOS APIs
+  (gfx, wm, fs, mouse, input, etc.)
+
+SYNTAX HIGHLIGHTING
+  Keywords      blue
+  Strings       yellow
+  Comments      dark grey
+  Numbers       purple
+  Symbols       orange
+
+COMMAND MODE
+  Press Escape to enter command mode. Type a command and press Enter.
+  Press Escape again to cancel.
+
+  :w            save current file
+  :w <path>     save to a new path
+  :o <path>     open a file (adds a new tab)
+  :n            new empty buffer
+  :r <path>     read file contents into current buffer at cursor
+  :q            close current tab (warns if unsaved)
+  :wq           save then close
+  :help         open this help file
+
+RUNNING CODE
+  Save your file as .lua, then open it from the files app
+  (Enter to run, E to edit).
+  Or use the terminal: run /path/to/file.lua
+  print() output appears in the dropdown terminal (backtick to open).
+
+STATUS BAR
+  Shows: file path, cursor line/col, total lines.
+  Error lines are highlighted in red when a syntax error is detected.

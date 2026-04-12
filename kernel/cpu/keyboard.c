@@ -50,11 +50,27 @@ static void kbd_irq(regs_t *r) {
     } else {
         key_state[base + sc] = 1;             /* press   */
 
-        /* Produce ASCII for non-extended keys */
         if (base == 0 && sc < 128) {
+            /* F-keys (non-extended) */
+            if (sc == 0x3E) { cbuf_push('\x0f'); return; } /* F4 → close */
+
+            /* Normal key → produce ASCII */
             int shifted = key_state[KEY_LSHIFT] || key_state[KEY_RSHIFT];
             char c = shifted ? sc_shifted[sc] : sc_normal[sc];
             if (c) cbuf_push(c);
+        } else if (base == 128) {
+            /* Extended key — push sentinel bytes for common keys */
+            switch (sc) {
+                case 0x48: cbuf_push('\x01'); break; /* up        */
+                case 0x50: cbuf_push('\x02'); break; /* down      */
+                case 0x4B: cbuf_push('\x03'); break; /* left      */
+                case 0x4D: cbuf_push('\x04'); break; /* right     */
+                case 0x53: cbuf_push('\x7f'); break; /* delete    */
+                case 0x47: cbuf_push('\x05'); break; /* home      */
+                case 0x4F: cbuf_push('\x06'); break; /* end       */
+                case 0x49: cbuf_push('\x0b'); break; /* page up   */
+                case 0x51: cbuf_push('\x0c'); break; /* page down */
+            }
         }
     }
 }

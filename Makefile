@@ -59,6 +59,14 @@ OBJS = kernel/boot/entry.o \
        kernel/mm/heap.o \
        kernel/vfs/vfs.o \
        kernel/wm/wm.o \
+       kernel/ipc/msgqueue.o \
+       kernel/proc/process.o \
+       kernel/proc/scheduler.o \
+       kernel/audio/mixer.o \
+       kernel/audio/ac97.o \
+       kernel/audio/pcspeaker.o \
+       kernel/disk/ata_pio.o \
+       kernel/disk/disk.o \
        kernel/lua/linit_kernel.o \
        kernel/lua/klua.o \
        $(COMPAT_OBJS) \
@@ -67,10 +75,16 @@ OBJS = kernel/boot/entry.o \
 
 # ── Targets ──────────────────────────────────────────────────────────────────
 
-all: kernel.bin tools/mklfs initrd.lfs
+all: kernel.bin tools/mklfs tools/lfs_inspect tools/mkdisk initrd.lfs
 
 # ── Host tools ────────────────────────────────────────────────────────────────
 tools/mklfs: tools/mklfs.c kernel/vfs/lfs_format.h
+	$(HOSTCC) -std=c11 -O2 -Wall -o $@ $<
+
+tools/lfs_inspect: tools/lfs_inspect.c kernel/vfs/lfs_format.h
+	$(HOSTCC) -std=c11 -O2 -Wall -o $@ $<
+
+tools/mkdisk: tools/mkdisk.c
 	$(HOSTCC) -std=c11 -O2 -Wall -o $@ $<
 
 # ── initrd image ──────────────────────────────────────────────────────────────
@@ -103,6 +117,18 @@ kernel/vfs/%.o: kernel/vfs/%.c
 kernel/wm/%.o: kernel/wm/%.c
 	$(CC) $(CFLAGS) -Ikernel -c $< -o $@
 
+kernel/ipc/%.o: kernel/ipc/%.c
+	$(CC) $(LUACFLAGS) -Ikernel -I lua -c $< -o $@
+
+kernel/proc/%.o: kernel/proc/%.c
+	$(CC) $(LUACFLAGS) -Ikernel -I lua -c $< -o $@
+
+kernel/audio/%.o: kernel/audio/%.c
+	$(CC) $(CFLAGS) -Ikernel -c $< -o $@
+
+kernel/disk/%.o: kernel/disk/%.c
+	$(CC) $(CFLAGS) -Ikernel -c $< -o $@
+
 kernel/lua/klua.o: kernel/lua/klua.c
 	$(CC) $(LUACFLAGS) -Ikernel -I lua -c $< -o $@
 
@@ -129,31 +155,56 @@ iso:
 	mkdir -p iso/boot/grub
 	cp kernel.bin iso/boot/kernel.bin
 	cp initrd.lfs iso/boot/initrd.lfs
-	printf 'set timeout=0\nset default=0\n\nmenuentry "momOS" {\n\tmultiboot /boot/kernel.bin\n\tmodule /boot/initrd.lfs\n\tboot\n}\n' > iso/boot/grub/grub.cfg
+	printf 'set timeout=5\nset default=0\nset gfxmode=640x480x32,640x480x24,640x480\nset gfxpayload=keep\n\nmenuentry "momOS" {\n\tmultiboot /boot/kernel.bin\n\tmodule /boot/initrd.lfs\n\tboot\n}\n' > iso/boot/grub/grub.cfg
 	grub-mkrescue -o momos.iso iso
 	rm -rf iso
 
 # ── Run targets (run these from MSYS2) ────────────────────────────────────────
 
-run-iso: momos.iso
-	$(QEMU) -M pc -cdrom momos.iso -m 64M -vga std -display sdl -boot d -serial stdio
+run-iso: momos.iso disk.img
+	$(QEMU) -M pc -cdrom momos.iso -m 64M -vga std -display sdl -boot d -serial stdio \
+	        -drive format=raw,file=disk.img \
+	        -device AC97,audiodev=snd0 -audiodev sdl,id=snd0
 
-run: kernel.bin
-	$(QEMU) -M pc -kernel kernel.bin -m 64M -vga std -display sdl
+# disk.img persists between runs so saves survive reboots.
+# Delete it manually to reset to a clean disk.
+disk.img: tools/mkdisk
+	./tools/mkdisk disk.img 20
+
+run: kernel.bin initrd.lfs disk.img
+	$(QEMU) -M pc -kernel kernel.bin -initrd initrd.lfs -m 64M -vga std -display sdl \
+	        -drive format=raw,file=disk.img -serial stdio \
+	        -device AC97,audiodev=snd0 -audiodev sdl,id=snd0
 
 run-serial: kernel.bin
 	$(QEMU) -kernel kernel.bin -m 64M -nographic -serial stdio
 
+test: tools/test_vfs
+	./tools/test_vfs
+
+tools/test_vfs: tools/test_vfs.c kernel/vfs/lfs_format.h kernel/vfs/vfs.h kernel/vfs/vfs.c
+	$(HOSTCC) -std=c11 -O2 -Wall -Wno-unused-function \
+	          -I. -o $@ tools/test_vfs.c
+
 clean:
-	rm -f tools/mklfs tools/mklfs.exe initrd.lfs
+	rm -f tools/mklfs tools/mklfs.exe tools/lfs_inspect tools/lfs_inspect.exe \
+	      tools/mkdisk tools/mkdisk.exe tools/test_vfs tools/test_vfs.exe initrd.lfs
 	rm -f kernel/boot/entry.o kernel/kernel.o \
 	      kernel/cpu/cpu.o kernel/cpu/isr.o kernel/cpu/setjmp.o \
 	      kernel/cpu/serial.o kernel/cpu/gdt.o kernel/cpu/idt.o kernel/cpu/pit.o \
 	      kernel/mm/phys.o kernel/mm/paging.o kernel/mm/heap.o \
 	      kernel/vfs/vfs.o \
+	      kernel/ipc/msgqueue.o \
+	      kernel/proc/process.o kernel/proc/scheduler.o \
+	      kernel/audio/mixer.o kernel/audio/ac97.o kernel/audio/pcspeaker.o \
+	      kernel/disk/ata_pio.o kernel/disk/disk.o \
 	      kernel/lua/klua.o kernel/lua/linit_kernel.o \
 	      $(COMPAT_OBJS) $(LUA_OBJS) \
 	      kernel.bin momos.iso
 	rm -rf iso
 
-.PHONY: all run run-iso run-serial iso clean
+# Remove the disk image (loses all saved state)
+clean-disk:
+	rm -f disk.img
+
+.PHONY: all run run-iso run-serial iso test clean clean-disk

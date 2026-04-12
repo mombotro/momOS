@@ -1,0 +1,81 @@
+PIXEL — sprite & pixel art editor
+==================================
+
+WINDOW LAYOUT
+  Left panel    tools
+  Center        canvas (the sprite)
+  Right panel   palette, frames, layers
+  Top bar       filename and status flags
+  Bottom bar    cursor position and zoom level
+
+TOOLS  (press the letter to select)
+  P   Pencil    click and drag to draw
+  E   Eraser    click and drag to erase (sets pixels transparent)
+  F   Fill      flood-fill an area with the current color
+  L   Line      click to set start, release to commit
+  R   Rect      click to set corner, release to draw outline
+  K   Eyedrop   click a pixel to pick its color
+
+DRAWING
+  Left-click / drag    use current tool
+  Right-click / drag   pan the canvas
+  Click palette        select a color (color 0 = transparent)
+
+ZOOM
+  = or +    zoom in
+  -         zoom out
+  0         fit sprite to canvas
+  Pixel grid appears automatically at zoom 4x and above.
+
+CANVAS NAVIGATION
+  Arrow keys    navigate frames (left/right) and layers (up/down)
+  Right-drag    pan when zoomed in
+
+UNDO
+  Z    undo last stroke (single level)
+
+FRAMES  (animation)
+  Left / Right arrow    previous / next frame
+  Space                 play / stop animation
+  Frames shown as thumbnails in the right panel — click to jump.
+  Add/remove frames with :+f and :-f in command mode.
+  Maximum 16 frames.
+
+LAYERS
+  Up / Down arrow    previous / next layer
+  Layers drawn bottom to top. Lower layers show through transparent pixels.
+  Add/remove layers with :+l and :-l in command mode.
+  Maximum 4 layers.
+
+ONION SKIN
+  O    toggle onion skin (shows previous frame as a dim overlay)
+  Useful for drawing smooth animation.
+
+COMMAND MODE
+  Press Escape to enter command mode. Type a command and press Enter.
+
+  :w            save (uses current filename)
+  :w <path>     save to path (.mpi extension added automatically)
+  :o <path>     open a .mpi file
+  :n            new 16x16 sprite
+  :n <W>x<H>    new sprite with custom size (max 128x128)
+  :+f           add a frame
+  :-f           remove last frame
+  :+l           add a layer
+  :-l           remove last layer
+  :q            quit (warns if unsaved)
+  :wq           save and quit
+  :help         open this help file
+
+FILE FORMAT (.mpi)
+  Binary format. Header: MPI1 + width + height + layers + frames + 8 reserved bytes.
+  Then pixel data: for each frame, for each layer, width*height bytes (palette index).
+  Color 0 is transparent.
+
+PALETTE
+  32 fixed colors (indices 0-31).
+  Click any swatch in the right panel to select.
+  Current color shown as a larger swatch below the palette grid.
+
+SAVING
+  Use S as a quick-save shortcut (same as :w).
