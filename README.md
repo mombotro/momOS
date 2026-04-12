@@ -2,7 +2,7 @@
 
 A handmade fantasy workstation OS that runs on real hardware. 32-bit x86 bare-metal kernel with a Lua scripting environment, windowed desktop, sprite editor, music tracker, map editor, and code editor — all built from scratch.
 
-![momOS desktop](docs/screenshot.png)
+![momOS desktop](docs/desktop.png)
 
 ## What it is
 
