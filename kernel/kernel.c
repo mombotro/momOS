@@ -8,6 +8,7 @@
 #include "mm/phys.h"
 #include "mm/paging.h"
 #include "mm/heap.h"
+#include "cpu/acpi.h"
 #include "vfs/vfs.h"
 #include "wm/wm.h"
 #include "lua/klua.h"
@@ -225,6 +226,9 @@ void kernel_main(uint32_t magic, mb1_info_t *mb) {
 
     /* Kernel heap */
     heap_init();
+
+    /* ACPI tables (needs paging + heap) */
+    acpi_init();
 
     /* Mount initrd (first multiboot module) */
     if ((mb->flags & MB1_FLAG_MODS) && mb->mods_count > 0) {

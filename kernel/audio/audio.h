@@ -26,10 +26,19 @@ typedef struct {
     uint32_t lfsr;       /* noise LFSR state */
 } audio_chan_t;
 
+/* ── Audio backend flags (set by init, readable from other translation units) */
+extern int ac97_present;
+extern int hda_present;
+
 /* ── Public API ─────────────────────────────────────────────────────────────*/
 
-/* Initialize audio subsystem. Returns 1 if AC97 found, 0 if PC speaker only. */
+/* Initialize audio subsystem. Tries AC97, then HDA, then PC speaker.
+   Returns 1 if hardware audio found, 0 if PC speaker only. */
 int  audio_init(void);
+
+/* Internal: HDA init (called from audio_init) */
+int  hda_init(void);
+void hda_refill(void);
 
 /* Set channel parameters (ch 0–3). */
 void audio_set_channel(int ch, uint8_t wave, uint32_t freq, uint8_t vol);

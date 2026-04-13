@@ -3,6 +3,7 @@
 #include "../cpu/serial.h"
 #include "../cpu/keyboard.h"
 #include "../cpu/io.h"
+#include "../cpu/acpi.h"
 #include "../vfs/vfs.h"
 #include "../mm/heap.h"
 #include "../mm/phys.h"
@@ -200,6 +201,45 @@ static int l_screen_h(lua_State *ls) { lua_pushinteger(ls, (lua_Integer)gfx_h); 
 /* pit_ticks() global (kept for back-compat) */
 static int l_pit_ticks(lua_State *ls) { lua_pushinteger(ls, (lua_Integer)pit_ticks()); return 1; }
 
+/* ── RTC helper ─────────────────────────────────────────────────────────── */
+static uint8_t cmos_read(uint8_t reg) {
+    outb(0x70, reg); return inb(0x71);
+}
+static uint8_t bcd2bin(uint8_t v) { return (uint8_t)((v & 0x0F) + ((v >> 4) * 10)); }
+
+/* sys.time() → {year,month,day,hour,min,sec} from hardware RTC */
+static int l_sys_time(lua_State *ls) {
+    /* wait for no update in progress */
+    for (int i = 0; i < 100000; i++) if (!(cmos_read(0x0A) & 0x80)) break;
+    uint8_t sec  = cmos_read(0x00);
+    uint8_t min  = cmos_read(0x02);
+    uint8_t hour = cmos_read(0x04);
+    uint8_t day  = cmos_read(0x07);
+    uint8_t mon  = cmos_read(0x08);
+    uint8_t year = cmos_read(0x09);
+    uint8_t regb = cmos_read(0x0B);
+    if (!(regb & 0x04)) {   /* BCD mode */
+        sec  = bcd2bin(sec);
+        min  = bcd2bin(min);
+        day  = bcd2bin(day);
+        mon  = bcd2bin(mon);
+        year = bcd2bin(year);
+        uint8_t pm = hour & 0x80;
+        hour = bcd2bin(hour & 0x7F);
+        if (pm) hour = (uint8_t)((hour + 12) % 24);
+    } else if (!(regb & 0x02) && (hour & 0x80)) {
+        hour = (uint8_t)((hour & 0x7F) + 12) % 24;
+    }
+    lua_newtable(ls);
+    lua_pushinteger(ls, 2000 + year); lua_setfield(ls, -2, "year");
+    lua_pushinteger(ls, mon);         lua_setfield(ls, -2, "month");
+    lua_pushinteger(ls, day);         lua_setfield(ls, -2, "day");
+    lua_pushinteger(ls, hour);        lua_setfield(ls, -2, "hour");
+    lua_pushinteger(ls, min);         lua_setfield(ls, -2, "min");
+    lua_pushinteger(ls, sec);         lua_setfield(ls, -2, "sec");
+    return 1;
+}
+
 /* ── sys API ────────────────────────────────────────────────────────────── */
 /* sys.ticks() → integer tick count */
 static int l_sys_ticks(lua_State *ls) { lua_pushinteger(ls, (lua_Integer)pit_ticks()); return 1; }
@@ -340,27 +380,25 @@ static int l_sys_load(lua_State *ls) {
     return 2;
 }
 
-/* sys.shutdown() — power off.
-   QEMU: write 0x2000 to port 0x604 (Bochs/QEMU ACPI shutdown).
-   Real hardware fallback: ACPI S5 via port 0x4004 (common ICH chipset). */
+/* sys.audio_info() → string describing detected audio backend */
+static int l_sys_audio_info(lua_State *ls) {
+    if (ac97_present)     lua_pushstring(ls, "AC97");
+    else if (hda_present) lua_pushstring(ls, "HDA");
+    else                  lua_pushstring(ls, "none (PC speaker)");
+    return 1;
+}
+
+/* sys.shutdown() — proper ACPI S5 shutdown (real hw + QEMU fallback) */
 static int l_sys_shutdown(lua_State *ls) {
     (void)ls;
-    /* QEMU / Bochs ACPI power-off */
-    outw(0x604, 0x2000);
-    /* ICH/PIIX ACPI power-off fallback (port varies; try common ones) */
-    outw(0x4004, 0x3400);
-    /* Spin forever if neither worked */
-    for (;;) { __asm__ volatile ("hlt"); }
+    acpi_shutdown();  /* does not return */
     return 0;
 }
 
-/* sys.reboot() — warm reboot via keyboard controller reset line. */
+/* sys.reboot() — 8042 keyboard controller reset */
 static int l_sys_reboot(lua_State *ls) {
     (void)ls;
-    /* Pulse the reset line via the 8042 keyboard controller */
-    outb(0x64, 0xFE);
-    /* Triple fault fallback */
-    for (;;) { __asm__ volatile ("hlt"); }
+    acpi_reboot();    /* does not return */
     return 0;
 }
 
@@ -377,6 +415,8 @@ static const luaL_Reg sys_lib[] = {
     {"load",        l_sys_load},
     {"shutdown",    l_sys_shutdown},
     {"reboot",      l_sys_reboot},
+    {"audio_info",  l_sys_audio_info},
+    {"time",        l_sys_time},
     {NULL, NULL}
 };
 

@@ -10,7 +10,6 @@
 static void outb(uint16_t p, uint8_t v)  { __asm__ volatile("outb %0,%1"::"a"(v),"Nd"(p)); }
 static void outl(uint16_t p, uint32_t v) { __asm__ volatile("outl %0,%1"::"a"(v),"Nd"(p)); }
 static uint8_t  inb(uint16_t p)  { uint8_t  v; __asm__ volatile("inb %1,%0":"=a"(v):"Nd"(p)); return v; }
-static uint16_t inw(uint16_t p)  { uint16_t v; __asm__ volatile("inw %1,%0":"=a"(v):"Nd"(p)); return v; }
 static uint32_t inl(uint16_t p)  { uint32_t v; __asm__ volatile("inl %1,%0":"=a"(v):"Nd"(p)); return v; }
 
 #define PCI_ADDR  0xCF8
@@ -25,7 +24,7 @@ static uint32_t pci_read(uint8_t bus, uint8_t dev, uint8_t fn, uint8_t reg) {
 }
 
 /* ── AC97 state ─────────────────────────────────────────────────────────────*/
-static int      ac97_present   = 0;
+int             ac97_present   = 0;
 static uint32_t ac97_nam_base  = 0;   /* Native Audio Mixer base (I/O) */
 static uint32_t ac97_nabm_base = 0;   /* Native Audio Bus Master base (I/O) */
 
@@ -92,8 +91,8 @@ int audio_init(void) {
     }
 
     if (!ac97_present) {
-        serial_puts("[AC97] not found — PC speaker only\n");
-        return 0;
+        serial_puts("[AC97] not found — trying HDA\n");
+        return hda_init();
     }
 
     /* Reset NABM PCM out channel */
@@ -130,9 +129,9 @@ int audio_init(void) {
     return 1;
 }
 
-/* Called periodically (from PIT IRQ or explicit poll) to refill completed buffers */
+/* Called periodically to refill completed buffers — dispatches to AC97 or HDA */
 void audio_refill(void) {
-    if (!ac97_present) return;
+    if (!ac97_present) { hda_refill(); return; }
     uint8_t civ = nabm_inb(NABM_PCMOUT_CIV);
     uint8_t lvi = nabm_inb(NABM_PCMOUT_LVI);
     /* Refill the buffer that was just consumed */

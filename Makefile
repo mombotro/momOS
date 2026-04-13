@@ -54,6 +54,7 @@ OBJS = kernel/boot/entry.o \
        kernel/cpu/pit.o \
        kernel/cpu/keyboard.o \
        kernel/cpu/mouse.o \
+       kernel/cpu/acpi.o \
        kernel/mm/phys.o \
        kernel/mm/paging.o \
        kernel/mm/heap.o \
@@ -64,6 +65,7 @@ OBJS = kernel/boot/entry.o \
        kernel/proc/scheduler.o \
        kernel/audio/mixer.o \
        kernel/audio/ac97.o \
+       kernel/audio/hda.o \
        kernel/audio/pcspeaker.o \
        kernel/disk/ata_pio.o \
        kernel/disk/disk.o \
@@ -123,6 +125,9 @@ kernel/ipc/%.o: kernel/ipc/%.c
 kernel/proc/%.o: kernel/proc/%.c
 	$(CC) $(LUACFLAGS) -Ikernel -I lua -c $< -o $@
 
+kernel/audio/hda.o: kernel/audio/hda.c
+	$(CC) $(CFLAGS) -Ikernel -c $< -o $@
+
 kernel/audio/%.o: kernel/audio/%.c
 	$(CC) $(CFLAGS) -Ikernel -c $< -o $@
 
@@ -155,7 +160,7 @@ iso:
 	mkdir -p iso/boot/grub
 	cp kernel.bin iso/boot/kernel.bin
 	cp initrd.lfs iso/boot/initrd.lfs
-	printf 'set timeout=5\nset default=0\nset gfxmode=640x480x32,640x480x24,640x480\nset gfxpayload=keep\n\nmenuentry "momOS" {\n\tmultiboot /boot/kernel.bin\n\tmodule /boot/initrd.lfs\n\tboot\n}\n' > iso/boot/grub/grub.cfg
+	printf 'set timeout=0\nset default=0\nset gfxmode=1024x600x32,1024x600x24,800x600x32,800x600x24,640x480x32,640x480\nset gfxpayload=keep\n\nmenuentry "momOS" {\n\tmultiboot /boot/kernel.bin\n\tmodule /boot/initrd.lfs\n\tboot\n}\n' > iso/boot/grub/grub.cfg
 	grub-mkrescue -o momos.iso iso
 	rm -rf iso
 
@@ -191,12 +196,12 @@ clean:
 	      tools/mkdisk tools/mkdisk.exe tools/test_vfs tools/test_vfs.exe initrd.lfs
 	rm -f kernel/boot/entry.o kernel/kernel.o \
 	      kernel/cpu/cpu.o kernel/cpu/isr.o kernel/cpu/setjmp.o \
-	      kernel/cpu/serial.o kernel/cpu/gdt.o kernel/cpu/idt.o kernel/cpu/pit.o \
+	      kernel/cpu/serial.o kernel/cpu/gdt.o kernel/cpu/idt.o kernel/cpu/pit.o kernel/cpu/acpi.o \
 	      kernel/mm/phys.o kernel/mm/paging.o kernel/mm/heap.o \
 	      kernel/vfs/vfs.o \
 	      kernel/ipc/msgqueue.o \
 	      kernel/proc/process.o kernel/proc/scheduler.o \
-	      kernel/audio/mixer.o kernel/audio/ac97.o kernel/audio/pcspeaker.o \
+	      kernel/audio/mixer.o kernel/audio/ac97.o kernel/audio/hda.o kernel/audio/pcspeaker.o \
 	      kernel/disk/ata_pio.o kernel/disk/disk.o \
 	      kernel/lua/klua.o kernel/lua/linit_kernel.o \
 	      $(COMPAT_OBJS) $(LUA_OBJS) \

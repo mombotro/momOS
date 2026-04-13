@@ -54,3 +54,10 @@ void paging_init(uint32_t fb_addr, uint32_t fb_size_bytes) {
     if (fb_addr) serial_puts(" + FB");
     serial_puts(")\n");
 }
+
+/* Map a 4 MB region containing phys_addr as write-through uncached MMIO */
+void paging_map_mmio(uint32_t phys_addr) {
+    /* PDE_PWT (bit 3) + PDE_PCD (bit 4) = write-through + cache-disable */
+    uint32_t base = phys_addr & ~((4u * 1024 * 1024) - 1);
+    map_4mb(base, PDE_WRITABLE | (1 << 3) | (1 << 4));
+}

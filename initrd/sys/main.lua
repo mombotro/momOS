@@ -350,6 +350,8 @@ local function close_app(app, win)
   win_saved[win] = nil
   wm.close(win)
   if focused_app == app then focused_app = nil end
+  -- stop any audio left running by the closed app
+  if audio then audio.stop_all() end
 end
 
 local function toggle_maximize(win, app)
@@ -422,6 +424,7 @@ local function desktop_ctx(mx, my)
     end },
     { label="Open terminal", action=function() launch("/apps/terminal.lua") end },
     { label="Open files",    action=function() launch("/apps/files.lua")    end },
+    { label="Settings",      action=function() launch("/apps/settings.lua") end },
     { label="---" },
     { label="Restart",  action=function() sys.reboot()   end },
     { label="Shut down", action=function() sys.shutdown() end },
@@ -474,6 +477,85 @@ local function resize_zone(win, mx, my)
   if on_b then return "bottom" end
 end
 
+-- ── Settings ──────────────────────────────────────────────────────────────────
+_G.momos_settings = {
+  clock_format = "24h",
+  tz_offset    = 0,
+  wallpaper    = 1,
+  theme        = "dark",
+}
+
+-- Theme palette data: 12 UI colors (indices 0-11) per theme
+_G.momos_themes = {
+  dark   = {0x1a1a2e,0x16213e,0x0f3460,0x533483,0xe94560,0xff6b9d,0xffb3c6,0xffffff,0xc0c0c0,0x808080,0x404040,0x000000},
+  green  = {0x001800,0x002200,0x003300,0x004400,0xff3333,0x00bb44,0x66ff88,0x00ff44,0x008833,0x005522,0x003311,0x000a00},
+  amber  = {0x1a1000,0x221800,0x332800,0x554400,0xff3333,0xffaa00,0xffdd88,0xffcc00,0xaa8800,0x886600,0x443300,0x110800},
+  light  = {0xf0f0f0,0xe8e8ec,0xd0d0dc,0x9090c8,0xcc2244,0x8866cc,0xccbbee,0x111122,0x444466,0x888899,0xbbbbcc,0xffffff},
+  purple = {0x12001a,0x1a0033,0x280055,0x550099,0xff3366,0xcc00ff,0xff88ff,0xffffff,0xcc88ff,0x7744aa,0x440077,0x080011},
+}
+
+_G.apply_theme = function(name)
+  local t = _G.momos_themes[name]
+  if not t then return end
+  for i, rgb in ipairs(t) do
+    gfx.set_pal(i-1, (rgb>>16)&0xFF, (rgb>>8)&0xFF, rgb&0xFF)
+  end
+  _G.momos_settings.theme = name
+end
+
+local function load_settings()
+  local data = fs.read and fs.read("/sys/settings.lua")
+  if not data then return end
+  local fn, err = load(data)
+  if not fn then return end
+  local ok, s = pcall(fn)
+  if not ok or type(s) ~= "table" then return end
+  for k, v in pairs(s) do _G.momos_settings[k] = v end
+  -- pit_ticks resets every boot; anchor manual time to now
+  if _G.momos_settings.manual_time then
+    _G.momos_settings.manual_pit0 = pit_ticks()
+  end
+  _G.apply_theme(_G.momos_settings.theme)
+end
+load_settings()
+
+-- ── Clock ─────────────────────────────────────────────────────────────────────
+local _rtc_base = sys.time and sys.time() or nil
+local _rtc_pit0 = pit_ticks()
+
+local function clock_hms()
+  local cfg = _G.momos_settings
+  local mt  = cfg.manual_time
+  if mt then
+    local elapsed = (pit_ticks() - (cfg.manual_pit0 or _rtc_pit0)) // 60
+    local t = mt.hour*3600 + mt.min*60 + mt.sec + elapsed
+    return (t//3600)%24, (t//60)%60, t%60,
+           mt.year, mt.month, mt.day
+  end
+  local tz = cfg.tz_offset or 0
+  if _rtc_base then
+    local elapsed = (pit_ticks() - _rtc_pit0) // 60
+    local t = (_rtc_base.hour+tz)*3600 + _rtc_base.min*60 + _rtc_base.sec + elapsed
+    return (t//3600)%24, (t//60)%60, t%60,
+           _rtc_base.year, _rtc_base.month, _rtc_base.day
+  end
+  local ts = pit_ticks()//60
+  return ((ts//3600)+tz)%24, (ts//60)%60, ts%60, 0, 0, 0
+end
+
+_G.clock_hms = clock_hms   -- expose for settings app
+
+local function get_clock()
+  local fmt = _G.momos_settings.clock_format
+  local h, m, s = clock_hms()
+  if fmt == "12h" then
+    local ap = h >= 12 and "P" or "A"
+    h = h % 12; if h == 0 then h = 12 end
+    return string.format("%2d:%02d %s", h, m, ap)
+  end
+  return string.format("%02d:%02d:%02d", h, m, s)
+end
+
 -- ── Taskbar ───────────────────────────────────────────────────────────────────
 local BTN_W  = 80
 local HOME_W = 24
@@ -512,6 +594,9 @@ end
 
 -- ── Main update ───────────────────────────────────────────────────────────────
 function _update()
+  -- pump audio DMA buffer every frame
+  audio.refill()
+
   -- refresh desktop icons ~every 2 seconds
   if pit_ticks() - last_desk_scan > 120 then
     refresh_desktop(); last_desk_scan = pit_ticks()
@@ -753,7 +838,7 @@ end
 
 -- ── Main draw ─────────────────────────────────────────────────────────────────
 function _draw()
-  gfx.cls(1)
+  gfx.cls(_G.momos_settings.wallpaper or 1)
 
   -- desktop icons
   local hx, hy = mouse.x(), mouse.y()
@@ -822,12 +907,10 @@ function _draw()
     local bx = SCREEN_W - #badge*CW - 4
     if flash then gfx.rect(bx-2, tb_y+2, #badge*CW+3, TB_H-4, COL_WARN) end
     gfx.print(badge, bx, tb_y+6, flash and 7 or COL_WARN)
-    local s = pit_ticks()//60
-    local clock = string.format("%02d:%02d:%02d", (s//3600)%24, (s//60)%60, s%60)
+    local clock = get_clock()
     gfx.print(clock, bx - #clock*CW - 6, tb_y+6, 7)
   else
-    local s = pit_ticks()//60
-    local clock = string.format("%02d:%02d:%02d", (s//3600)%24, (s//60)%60, s%60)
+    local clock = get_clock()
     gfx.print(clock, SCREEN_W-#clock*8-4, tb_y+6, 7)
   end
 

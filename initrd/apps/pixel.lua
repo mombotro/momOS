@@ -8,8 +8,8 @@ local CW, CH = 8, 8
 -- ── Layout ────────────────────────────────────────────────────────────────────
 local SB_H   = CH + 2          -- status bar height at bottom
 local TB_H   = CH + 2          -- top toolbar height
-local TOOL_W = 24              -- left tool panel width
-local RP_W   = 88              -- right panel (palette + frames)
+local TOOL_W = 44              -- left tool panel width
+local RP_W   = 112             -- right panel (palette + frames)
 local CANV_X = TOOL_W
 local CANV_Y = TB_H
 local CANV_W = WIN_W - TOOL_W - RP_W
@@ -309,14 +309,15 @@ local pan_start_oy = 0
 
 -- ── Palette panel ─────────────────────────────────────────────────────────────
 -- 32 colors, 8 cols × 4 rows in right panel
-local PAL_CELL  = 10
+local PAL_CELL  = 13
 local PAL_COLS  = 8
 local PAL_ROWS  = 4
 local PAL_X     = WIN_W - RP_W + 2
 local PAL_Y     = TB_H + 2
 
 -- ── Frame strip ───────────────────────────────────────────────────────────────
-local FSTRIP_Y  = PAL_Y + PAL_ROWS * PAL_CELL + 6
+-- Below: PAL header(CH) + grid(PAL_ROWS*PAL_CELL) + swatch(14) + gaps
+local FSTRIP_Y  = PAL_Y + CH + PAL_ROWS * PAL_CELL + 22
 local FTHUMB_W  = (RP_W - 6) // 4   -- up to 4 visible
 local FTHUMB_H  = 24
 
@@ -326,14 +327,14 @@ local LROW_H    = CH + 2
 
 -- ── Tool list ─────────────────────────────────────────────────────────────────
 local tools = {
-  { id="pencil",     label="P", key="p" },
-  { id="eraser",     label="E", key="e" },
-  { id="fill",       label="F", key="f" },
-  { id="line",       label="L", key="l" },
-  { id="rect",       label="R", key="r" },
-  { id="circle",     label="O", key="c" },
-  { id="select",     label="S", key="m" },
-  { id="eyedrop",    label="K", key="k" },
+  { id="pencil",     label="Pen",  key="p" },
+  { id="eraser",     label="Era",  key="e" },
+  { id="fill",       label="Fill", key="f" },
+  { id="line",       label="Line", key="l" },
+  { id="rect",       label="Rect", key="r" },
+  { id="circle",     label="Circ", key="c" },
+  { id="select",     label="Sel",  key="m" },
+  { id="eyedrop",    label="Pick", key="k" },
 }
 
 -- ── Selection state ───────────────────────────────────────────────────────────
@@ -463,14 +464,6 @@ local function zoom_out()
 end
 
 -- ── Draw functions ────────────────────────────────────────────────────────────
-local function draw_checkerboard(x, y, w, h)
-  for cy = 0, h-1 do
-    for cx = 0, w-1 do
-      local c = ((cx + cy) % 2 == 0) and 8 or 1
-      gfx.rect(x + cx, y + cy, 1, 1, c)
-    end
-  end
-end
 
 local function draw_canvas()
   -- clip canvas area
@@ -479,15 +472,20 @@ local function draw_canvas()
   local ox = CANV_X + pan_x
   local oy = CANV_Y + pan_y
 
-  -- checkerboard background (transparent fill)
-  for py = 0, spr.h - 1 do
-    for px = 0, spr.w - 1 do
+  -- flat background
+  gfx.rect(ox, oy, cw, ch, 11)
+  -- grid lines (only when zoomed enough to see them)
+  if zoom >= 4 then
+    for px = 0, spr.w do
       local sx = ox + px * zoom
+      if sx >= CANV_X and sx < CANV_X + CANV_W then
+        gfx.rect(sx, oy, 1, ch, 10)
+      end
+    end
+    for py = 0, spr.h do
       local sy = oy + py * zoom
-      if sx >= CANV_X and sy >= CANV_Y and
-         sx + zoom <= CANV_X + CANV_W and sy + zoom <= CANV_Y + CANV_H then
-        local checker = ((px + py) % 2 == 0) and 8 or 1
-        gfx.rect(sx, sy, zoom, zoom, checker)
+      if sy >= CANV_Y and sy < CANV_Y + CANV_H then
+        gfx.rect(ox, sy, cw, 1, 10)
       end
     end
   end
@@ -662,13 +660,14 @@ local function draw_canvas()
   gfx.rect(ox + cw, oy - 1, 1, ch + 2, C_BORDER)
 end
 
+local TOOL_BTN_H = CH + 4   -- taller buttons
 local function draw_tools()
   gfx.rect(0, TB_H, TOOL_W, CANV_H + SB_H, C_PANEL)
   for i, t in ipairs(tools) do
-    local ty = TB_H + (i-1) * (CH + 4) + 2
+    local ty = TB_H + (i-1) * (TOOL_BTN_H + 2) + 2
     local bg = (t.id == cur_tool) and C_SEL or C_PANEL
-    gfx.rect(2, ty, TOOL_W - 4, CH + 2, bg)
-    gfx.print(t.label, 2 + (TOOL_W-4-CW)//2, ty + 1,
+    gfx.rect(2, ty, TOOL_W - 4, TOOL_BTN_H, bg)
+    gfx.print(t.label, 4, ty + (TOOL_BTN_H - CH) // 2,
               t.id == cur_tool and C_ACTIVE or C_FG)
   end
   -- zoom indicator
@@ -1092,8 +1091,8 @@ end
 local function try_tool_click(lx, ly)
   if lx < 0 or lx >= TOOL_W then return false end
   for i, t in ipairs(tools) do
-    local ty = TB_H + (i-1) * (CH + 4) + 2
-    if ly >= ty and ly < ty + CH + 2 then
+    local ty = TB_H + (i-1) * (TOOL_BTN_H + 2) + 2
+    if ly >= ty and ly < ty + TOOL_BTN_H then
       cur_tool = t.id; return true
     end
   end

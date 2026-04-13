@@ -66,6 +66,7 @@ function game._update()
 
   -- restart on enter when dead
   if not alive and game.keypressed(game.KEY_ENTER) then
+    audio.stop(0); audio.stop(1)  -- stop(ch) is correct
     game._init()
     return
   end
@@ -73,6 +74,7 @@ function game._update()
   if not alive then return end
 
   timer = timer + 1
+  if timer == 2 then audio.stop(0); audio.stop(1) end  -- cut short sound cues
   if timer < SPEED then return end
   timer = 0
 
@@ -87,6 +89,9 @@ function game._update()
     if snake[i].x == nx and snake[i].y == ny then
       alive = false
       if score > hi_score then hi_score = score end
+      -- death sound: descending tone burst
+      audio.set(0, 0, 220, 180)
+      audio.set(1, 0, 150, 150)
       return
     end
   end
@@ -95,9 +100,14 @@ function game._update()
 
   if nx == food.x and ny == food.y then
     score = score + 1
+    -- eat sound: quick rising blip
+    audio.set(0, 0, 660, 160)
+    audio.set(1, 0, 880, 120)
     rand_food()
   else
     table.remove(snake)
+    -- movement tick: very short quiet click
+    audio.set(0, 0, 80, 40)
   end
 end
 

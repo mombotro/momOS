@@ -158,13 +158,14 @@ local mx, my = mouse.x() - wx, mouse.y() - wy
 ### audio — Sound
 
 ```lua
-audio.play_note(ch, freq, vol, wave)  -- ch=0–3, freq Hz, vol 0–255, wave 0–3
-audio.stop(ch)                         -- stop channel
-audio.play_msm(path)                   -- play .msm tracker file
-audio.stop_msm()                       -- stop tracker playback
+audio.set(ch, wave, freq, vol)   -- ch=0–3, wave 0–3, freq Hz, vol 0–255
+audio.stop(ch)                   -- stop one channel
+audio.stop_all()                 -- stop all channels
+audio.beep(freq)                 -- PC speaker tone (0 = off)
+audio.refill()                   -- pump DMA buffer (call each frame if using audio)
 ```
 
-Wave types: 0=square, 1=sine, 2=triangle, 3=noise.
+Wave types: 0=square, 1=sawtooth, 2=triangle, 3=noise.
 
 ### sys — System
 

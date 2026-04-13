@@ -124,6 +124,10 @@ local function advance_play()
       play_order = 1
     end
   end
+  -- keep view scrolled to playing row
+  if play_row < scroll + 1 or play_row > scroll + ROWS_VIS then
+    scroll = math.max(0, play_row - math.floor(ROWS_VIS / 2))
+  end
 end
 
 local function stop_play()
@@ -132,6 +136,7 @@ local function stop_play()
 end
 
 -- ── Editor state ──────────────────────────────────────────────────────────────
+local preview_timer = 0  -- frames until note preview channel 0 is silenced
 local cur_pat   = 1     -- pattern being edited
 local cur_row   = 1     -- cursor row
 local cur_ch    = 1     -- cursor channel (1-4)
@@ -276,10 +281,12 @@ local function draw_pattern_editor()
     local y = TB_H + (CH+2) + SONG_H + i*ROW_H
 
     -- row number
-    local is_cur = (row == cur_row) and (view_mode == "pattern")
-    local row_bg = is_cur and COL_SEL or (row % 4 == 1 and COL_PANEL or COL_BG)
+    local is_cur  = (row == cur_row) and (view_mode == "pattern")
+    local is_play = playing and (row == play_row)
+    local row_bg  = is_play and 5 or (is_cur and COL_SEL or (row % 4 == 1 and COL_PANEL or COL_BG))
     gfx.rect(0, y, EDITOR_W, ROW_H, row_bg)
-    gfx.print(string.format("%02d", row-1), 0, y, row % 4 == 1 and 9 or COL_DIM)
+    gfx.print(string.format("%02d", row-1), 0, y,
+              is_play and COL_ACTIVE or (row % 4 == 1 and 9 or COL_DIM))
 
     for ch = 1, 4 do
       local cx = (ch-1)*CHAN_W + CW*2 + 2
@@ -389,6 +396,11 @@ local function update()
   if playing then advance_play() end
   -- refill audio DMA buffer if available
   if audio then audio.refill() end
+  -- silence note preview after short delay
+  if preview_timer > 0 then
+    preview_timer = preview_timer - 1
+    if preview_timer == 0 and not playing and audio then audio.stop(0) end
+  end
 
   -- mouse click in instrument panel (select instrument)
   local mx,my = mouse.x(),mouse.y()
@@ -427,9 +439,10 @@ local function enter_note(c)
   pat[cur_row][cur_ch].note = note
   pat[cur_row][cur_ch].inst = pat[cur_row][cur_ch].inst > 0 and pat[cur_row][cur_ch].inst or cur_inst
   modified = true
-  -- preview note
+  -- preview note (auto-stop after 20 frames)
   local ins = song.instruments[cur_inst] or default_inst()
   if audio then audio.set(0, ins.wave, NOTE_FREQ[note] or 440, ins.volume) end
+  preview_timer = 20
   -- advance cursor
   cur_row = math.min(cur_row + 1, ROWS_PER_PAT)
   if cur_row > scroll + ROWS_VIS then scroll = cur_row - ROWS_VIS end

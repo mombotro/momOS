@@ -201,9 +201,9 @@ local in_window = lx >= 0 and ly >= 0 and lx < WIN_W and ly < WIN_H
 ## audio — Audio API
 
 ```lua
-audio.play_note(ch, freq, vol, wave)
+audio.set(ch, wave, freq, vol)
 ```
-Play a tone on channel `ch` (0–3). `freq` in Hz, `vol` 0–255, `wave`: 0=square, 1=sine, 2=triangle, 3=noise.
+Play a tone on channel `ch` (0–3). `wave`: 0=square, 1=sawtooth, 2=triangle, 3=noise. `freq` in Hz. `vol` 0–255.
 
 ```lua
 audio.stop(ch)
@@ -211,14 +211,19 @@ audio.stop(ch)
 Stop channel `ch`.
 
 ```lua
-audio.play_msm(path)
+audio.stop_all()
 ```
-Load and play a `.msm` tracker file from the VFS.
+Stop all channels.
 
 ```lua
-audio.stop_msm()
+audio.beep(freq)
 ```
-Stop tracker playback.
+PC speaker tone at `freq` Hz. Pass 0 to silence.
+
+```lua
+audio.refill()
+```
+Pump the DMA buffer. Call once per frame from `_update` when using audio.
 
 ## sys — System API
 
