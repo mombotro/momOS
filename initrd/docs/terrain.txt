@@ -1,0 +1,67 @@
+Terrain — tile map editor
+=========================
+
+OVERVIEW
+  Layer-based tile map editor.
+  Supports up to 4 layers, unlimited map sizes.
+  Import tilesets from .mpi sprite files.
+  Place objects with type labels.
+  Saves/loads .mtm map files.
+
+LAYOUT
+  Top toolbar    filename, current layer, zoom level
+  Map viewport   scrollable, zoomable tile canvas
+  Tile picker (right panel)  tileset tiles + object types
+  Status bar     tile coords, hints, command mode
+
+MOUSE
+  Left-click     place selected tile (or erase if tile 0 selected)
+  Right-click    pick tile under cursor (eyedropper)
+  Middle-drag    pan viewport
+  Scroll wheel   zoom in / out
+  Click panel    select tile from tileset
+
+KEYBOARD
+  Arrow keys     scroll map (when no window focus)
+  +  /  -        zoom in / out
+  [  /  ]        previous / next layer
+  Tab            cycle to next layer
+  E              select tile 0 (eraser)
+  G              toggle grid lines
+  O              toggle object mode (place object markers)
+  Ctrl+Z         undo last tile placement
+
+LAYERS
+  Layer 1 = base ground (no transparency)
+  Layers 2-4 = overlay layers (index 0 = transparent)
+  Use layers for: ground, decoration, collision marks, lighting
+
+TILESET
+  Load a .mpi file as the tileset source.
+  Each 16×16 (or tile_w × tile_h) block in the sprite becomes one tile.
+  Tile index 0 is always empty / transparent.
+
+OBJECTS
+  Object mode (O key) lets you place named markers on the map.
+  Objects store x, y, and a type string.
+  Useful for spawn points, triggers, doors, items.
+
+COMMAND MODE  (press Esc to enter)
+  :w [path]          save (default .mtm extension)
+  :o <path>          open map file
+  :q                 quit
+  :wq                save and quit
+  :ts <path>         load tileset from .mpi file
+  :n <W> <H>         new map (width × height in tiles)
+  :tsize <W> <H>     set tile size in pixels (default 16×16)
+  :layers <N>        set layer count (1-4)
+  :resize <W> <H>    resize map (crops or expands with empty tiles)
+
+SAVE / LOAD
+  .mtm files store: map dimensions, tile size, layer count,
+  tileset path, all tile data, and object list.
+  VFS must be saved (Ctrl+S) to persist to disk.
+
+FILE FORMAT
+  .mtm   momOS Tile Map
+         Binary: header + layer data + object list

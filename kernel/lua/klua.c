@@ -202,6 +202,21 @@ static int l_screen_h(lua_State *ls) { lua_pushinteger(ls, (lua_Integer)gfx_h); 
 static int l_pit_ticks(lua_State *ls) { lua_pushinteger(ls, (lua_Integer)pit_ticks()); return 1; }
 
 /* ── RTC helper ─────────────────────────────────────────────────────────── */
+#ifdef HOSTED
+#include <time.h>
+static int l_sys_time(lua_State *ls) {
+    time_t t = time(NULL);
+    struct tm *tm = localtime(&t);
+    lua_newtable(ls);
+    lua_pushinteger(ls, 1900 + tm->tm_year); lua_setfield(ls, -2, "year");
+    lua_pushinteger(ls, 1 + tm->tm_mon);     lua_setfield(ls, -2, "month");
+    lua_pushinteger(ls, tm->tm_mday);        lua_setfield(ls, -2, "day");
+    lua_pushinteger(ls, tm->tm_hour);        lua_setfield(ls, -2, "hour");
+    lua_pushinteger(ls, tm->tm_min);         lua_setfield(ls, -2, "min");
+    lua_pushinteger(ls, tm->tm_sec);         lua_setfield(ls, -2, "sec");
+    return 1;
+}
+#else
 static uint8_t cmos_read(uint8_t reg) {
     outb(0x70, reg); return inb(0x71);
 }
@@ -239,6 +254,7 @@ static int l_sys_time(lua_State *ls) {
     lua_pushinteger(ls, sec);         lua_setfield(ls, -2, "sec");
     return 1;
 }
+#endif
 
 /* ── sys API ────────────────────────────────────────────────────────────── */
 /* sys.ticks() → integer tick count */
@@ -374,7 +390,7 @@ static int l_sys_load(lua_State *ls) {
         return 2;
     }
     /* Reinitialise VFS from the new buffer */
-    vfs_init((uint32_t)(uintptr_t)buf, image_size);
+    vfs_init((uintptr_t)buf, image_size);
     lua_pushboolean(ls, 1);
     lua_pushnil(ls);
     return 2;

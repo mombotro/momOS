@@ -1,0 +1,115 @@
+momOS quick reference
+=====================
+
+DESKTOP
+  Click icon          launch app
+  Right-click desktop context menu (settings, terminal, new folder)
+  Drag title bar      move window
+  Double-click title  maximize / restore
+  [x] button         close window
+  Taskbar button      focus / raise app
+  Right-click taskbar close app
+  `  (backtick)       toggle terminal
+  Ctrl+S              save VFS to disk
+  F4                  close focused app
+
+TERMINAL COMMANDS
+  ls [path]           list directory
+  cd <path>           change directory
+  cat <file>          print file
+  run <file>          execute Lua file as app
+  open <file>         open in associated app
+  write <file>        write mode (. to save, ESC to cancel)
+  mkdir <dir>         create directory
+  rm <path>           delete file or directory
+  ps                  list running apps
+  kill <name>         close app by name
+  save                flush VFS to disk
+  load                reload VFS from disk
+  clear               clear terminal
+  help                print this list
+
+  Lua REPL also available — type any Lua expression.
+  = expr              print expression result
+
+QUILL (text editor)
+  :w [path]           save
+  :o <path>           open
+  :q                  quit
+  :wq                 save and quit
+  Arrow keys          navigate
+  Ctrl+S              quick save
+
+PIXEL (sprite editor)
+  Tools: Pen Era Fill Line Rect Circ Sel Pick
+  Left-click          apply tool
+  Right-click canvas  pick color
+  Scroll wheel        zoom
+  0-9                 select palette color
+  Ctrl+Z              undo
+  :w <path>           save .mpi file
+  :o <path>           open .mpi file
+  :n [WxH]            new canvas (default 16x16)
+  :+f / :-f           add / remove animation frame
+  :icon <name>        save as desktop icon for <name>
+  s                   quick save
+
+CHIRP (tracker)
+  Arrow keys          move cursor
+  Space               play / stop
+  Note keys (in row)  a=C w=C# s=D e=D# d=E f=F t=F#
+                      g=G y=G# h=A u=A# j=B
+  Del                 clear cell
+  + / -               adjust BPM
+  [ / ]               prev / next pattern
+  Ctrl+S              save
+
+FILES (file manager)
+  Click               select
+  Double-click folder enter directory
+  Double-click file   open in associated app
+  Backspace           go up one level
+  Right-click         copy / cut / paste / delete / rename
+
+SETTINGS
+  Clock panel         12h/24h format, RTC or manual time, timezone
+  Display panel       wallpaper color
+  Theme panel         Dark / Green / Amber / Light / Purple
+  Audio panel         backend info
+  System panel        Shutdown / Reboot
+
+SAVING
+  Files live in RAM until saved to disk.
+  Ctrl+S or 'save' in terminal writes everything to disk.
+  Changes survive reboot only after saving.
+
+MAZE3D (3D first-person raycasting maze)
+  Arrow keys / WASD   move forward/back, turn left/right
+  R                   generate new maze (after escaping)
+  Find the green exit cell to win. Minimap in top-right corner.
+  Compass (N/S/E/W) shown top-right of HUD bar.
+
+ASTEROID
+  Arrow keys / WASD   rotate + thrust
+  Space               fire
+  Lives shown top-right; score top-left
+
+TODO (nested list editor)
+  Type freely; # headings, - list items
+  Tab on - line       indent (sub-item)
+  Shift+Tab           dedent (remove indent)
+  Click [< hide] btn  toggle heading sidebar
+  Click heading       jump to that line
+  Ctrl+S              save now (autosaves 2s after last edit)
+  File saved to /home/todo.txt
+
+CUSTOM ICONS
+  In Pixel: :icon <appname>   saves /sys/icons/<appname>.mpi
+  Desktop refreshes within ~2 seconds.
+  See chirp.txt and terrain.txt for app-specific help.
+
+FILE TYPES
+  .mpi   sprite image (open in Pixel)
+  .msm   music module (open in Chirp)
+  .mtm   tile map (open in Terrain)
+  .lua   Lua script (run or open in Quill)

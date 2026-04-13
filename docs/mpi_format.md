@@ -1,5 +1,9 @@
 # momOS Pixel Image (.mpi) Format
 
+> **Desktop icons:** Save any `.mpi` file to `/sys/icons/<appname>.mpi` and the
+> desktop will use it as that app's icon (refreshes every ~2 seconds).
+> From inside the Pixel editor, use `:icon <appname>` to do this in one step.
+
 ## Overview
 
 `.mpi` is a compact binary sprite format supporting multiple frames and layers.

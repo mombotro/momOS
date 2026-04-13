@@ -158,6 +158,7 @@
 - [x] Save/load `.mpi`, help (`?`)
 - [x] `tools/import_png.py` (PNG → .mpi, Floyd-Steinberg dithering)
 - [x] Wider toolbar with labeled tool buttons, larger palette cells, grid background
+- [x] `:icon <name>` — saves `.mpi` to `/sys/icons/<name>.mpi`; desktop refreshes within ~2 s
 
 ### Chirp — Music Tracker
 - [x] 4-channel software mixer (22050 Hz, 8-bit, `kernel/audio/mixer.c`)
@@ -167,19 +168,32 @@
 - [x] Tracker UI: pattern grid, 4 channels, note/inst/vol/fx columns
 - [x] 64 patterns × 32 rows, 16 instrument presets, 8 effects
 - [x] Real-time playback (space), playing row highlighted + auto-scroll
+- [x] Notes auto-stop at row boundaries (no sustain bleed between rows)
 - [x] Note preview auto-stops (no stuck sound)
 - [x] Save/load `.msm`
+- [x] In-OS help doc (`/docs/chirp.txt`)
 
 ### Terrain — Map Editor
 - [x] Tile grid up to 256×256, 4 tile layers + 1 object layer
 - [x] Import sprite sheet from `.mpi`
 - [x] Object properties key-value pairs
 - [x] Save/load `.mtm`
+- [x] Flat black background + dark gray grid lines (no checkerboard)
+- [x] In-OS help doc (`/docs/terrain.txt`)
 
 ### Shelf — Asset Browser
 - [x] Grid view, `.mpi` thumbnails, `.msm` play button
 - [x] Double-click → open in associated editor
 - [x] Directory navigation
+
+### Games & Apps (Phase 3 additions)
+- [x] **Snake** — classic snake game
+- [x] **Bouncer** — physics toy
+- [x] **Asteroid** — Asteroids clone; vector ship, 3-size splitting rocks, particles, screen wrap, `input.key_down()` polling
+- [x] **Maze3D** — first-person DDA raycaster; procedural maze gen, minimap, compass, distance fog, exit portal
+- [x] **Todo** — nested todo list; `#` headings, `- ` list items, Tab/Shift+Tab indent, debounced autosave, hideable heading sidebar
+- [x] Desktop pixel-art icons for all apps; custom `.mpi` icon support via `/sys/icons/`
+- [x] In-OS help file (`/docs/help.txt`) with all controls
 
 **Phase 3 milestone: Make a complete tiny game using only momOS tools.**
 
@@ -199,10 +213,13 @@
 - [ ] `sys.export` / `sys.import` — host filesystem bridge (hosted mode)
 
 ### SDL2 Hosted Mode
-- [ ] Write `kernel/hal/hosted/` SDL2 HAL (display, input, audio, disk)
-- [ ] `make hosted` builds native binary
-- [ ] Disk image: `~/.momos/disk.img`
-- [ ] Test on Linux, macOS, Windows
+- [x] Write `kernel/hosted/hal.c` — SDL2 HAL (display, input, audio, disk)
+- [x] Write `kernel/hosted/main.c` — SDL2 entry point, 1024×600 window, 60 fps cap
+- [x] `make hosted` builds `momos.exe`; `make dist` produces portable `dist/` folder
+- [x] Arrow keys, backspace, tab, shift+tab, escape injected via SDL_KEYDOWN (SDL_TEXTINPUT skips control chars)
+- [x] `input.key_down()` works via PS/2 key_state table updated from SDL scancodes
+- [x] Disk image: `disk.img` next to executable
+- [x] Tested on Windows (MSYS2 UCRT64 + SDL2)
 
 ### Real Hardware Testing
 - [x] Boot USB on Acer Aspire 1 — VESA framebuffer, keyboard, mouse

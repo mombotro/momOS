@@ -20,3 +20,12 @@ iso/
 
 # Screenshots (add manually when ready)
 docs/screenshot.png
+
+# Distribution
+/dist
+/versions
+
+# Hosted binary
+momos
+momos.exe
+hosted_obj/

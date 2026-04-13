@@ -919,6 +919,16 @@ local function exec_cmd(line)
     cmd_new(line:sub(3))
   elseif line == "n" then
     cmd_new()
+  elseif line:sub(1,5) == "icon " then
+    local iname = line:sub(6):match("^%s*(.-)%s*$")
+    if iname == "" then set_status("usage: :icon <appname>"); return end
+    if not fs.exists("/sys/icons") then fs.mkdir("/sys/icons") end
+    local path = "/sys/icons/"..iname..".mpi"
+    if fs.write(path, serialize()) then
+      set_status("icon set for "..iname.." — "..spr.w.."x"..spr.h)
+    else
+      set_status("write failed")
+    end
   elseif line == "+f" then
     if spr.num_frames < 16 then
       spr.num_frames = spr.num_frames + 1

@@ -115,7 +115,10 @@ local function abspath(p)
 end
 
 local cmds = {}
-cmds.help  = function(_) push("help ls cat cd run open write clear mkdir rm ps kill save load", COL_DIM) end
+cmds.help  = function(_)
+  quill_open_file = "/docs/help.txt"
+  launch("/apps/quill.lua")
+end
 cmds.clear = function(_) lines = {} end
 
 cmds.ls = function(args)
@@ -277,6 +280,209 @@ local ICON_MARGIN     = 8           -- left/top margin
 local icons           = {}
 local last_desk_scan  = -999
 
+-- ── Custom .mpi icon cache ────────────────────────────────────────────────────
+-- Stores parsed icon data keyed by app name.
+-- nil = not yet checked, false = checked but not found, table = loaded icon.
+local icon_cache = {}
+
+local function parse_icon_file(name)
+  local data = fs.read("/sys/icons/"..name..".mpi")
+  if not data or #data < 16 then return false end
+  if data:sub(1,4) ~= "MPI1" then return false end
+  local w, h  = data:byte(5), data:byte(6)
+  local nl, nf = data:byte(7), data:byte(8)
+  if w < 1 or h < 1 or nl < 1 or nf < 1 then return false end
+  if #data < 16 + w * h * nl * nf then return false end
+  -- flatten frame 1, all layers (bottom → top, non-zero overwrites)
+  local flat = {}
+  for i = 1, w * h do flat[i] = 0 end
+  local pos = 17
+  for f = 1, nf do
+    for l = 1, nl do
+      for i = 1, w * h do
+        local c = data:byte(pos)
+        if f == 1 and c ~= 0 then flat[i] = c end
+        pos = pos + 1
+      end
+    end
+  end
+  -- scale to fit 32×32, center
+  local scale = math.max(1, math.floor(32 / math.max(w, h)))
+  local ox_off = (32 - w * scale) // 2
+  local oy_off = (32 - h * scale) // 2
+  return { w=w, h=h, scale=scale, ox_off=ox_off, oy_off=oy_off, px=flat }
+end
+
+local function draw_mpi_icon(ic_data, ox, oy)
+  local s, w = ic_data.scale, ic_data.w
+  local xo = ox + ic_data.ox_off
+  local yo = oy + ic_data.oy_off
+  for i, c in ipairs(ic_data.px) do
+    if c ~= 0 then
+      local px = (i - 1) % w
+      local py = (i - 1) // w
+      gfx.rect(xo + px * s, yo + py * s, s, s, c)
+    end
+  end
+end
+
+-- ── Desktop icon pixel art (32×32, drawn at ox,oy) ───────────────────────────
+local function draw_app_icon(name, ox, oy)
+  -- custom .mpi icon takes priority
+  if icon_cache[name] == nil then
+    icon_cache[name] = parse_icon_file(name)
+  end
+  if icon_cache[name] then
+    draw_mpi_icon(icon_cache[name], ox, oy)
+    return
+  end
+  if name == "terminal" then
+    gfx.rect(ox+1,  oy+2,  30, 20, 10)
+    gfx.rect(ox+3,  oy+4,  26, 16, 11)
+    gfx.rect(ox+5,  oy+7,  14, 2,  16)
+    gfx.rect(ox+5,  oy+11, 18, 2,  16)
+    gfx.rect(ox+5,  oy+15, 8,  2,  16)
+    gfx.rect(ox+14, oy+15, 2,  2,  7)
+    gfx.rect(ox+14, oy+22, 4,  4,  10)
+    gfx.rect(ox+8,  oy+26, 16, 3,  9)
+  elseif name == "files" then
+    gfx.rect(ox+1,  oy+10, 30, 18, 13)
+    gfx.rect(ox+1,  oy+7,  12, 5,  13)
+    gfx.rect(ox+3,  oy+13, 26, 13, 14)
+    gfx.rect(ox+6,  oy+17, 14, 2,  24)
+    gfx.rect(ox+6,  oy+21, 12, 2,  24)
+  elseif name == "quill" then
+    for i=0,20 do gfx.pset(ox+3+i, oy+1+i, 7)  end
+    for i=0,20 do gfx.pset(ox+2+i, oy+1+i, 25) end
+    for i=0,12 do gfx.pset(ox+3+i, oy+i,   29) end
+    for i=0,12 do gfx.pset(ox+4+i, oy+2+i, 29) end
+    gfx.rect(ox+2,  oy+22, 3, 5, 11)
+    gfx.pset(ox+3,  oy+27, 19)
+    gfx.pset(ox+4,  oy+27, 19)
+  elseif name == "pixel" then
+    gfx.rect(ox+2,  oy+2,  18, 18, 11)
+    gfx.rect(ox+4,  oy+4,  6,  6,  12)
+    gfx.rect(ox+11, oy+4,  6,  6,  14)
+    gfx.rect(ox+4,  oy+11, 6,  6,  19)
+    gfx.rect(ox+11, oy+11, 6,  6,  16)
+    gfx.line(ox+21, oy+10, ox+29, oy+2, 30)
+    gfx.line(ox+22, oy+10, ox+30, oy+2, 24)
+    gfx.rect(ox+19, oy+12, 3,  5,  8)
+    gfx.circfill(ox+19, oy+17, 2, 7)
+  elseif name == "chirp" then
+    gfx.circfill(ox+8,  oy+21, 5, 7)
+    gfx.rect(ox+13, oy+5,  2,  17, 7)
+    gfx.line(ox+14, oy+5,  ox+24, oy+9,  7)
+    gfx.line(ox+14, oy+9,  ox+24, oy+13, 7)
+    gfx.circfill(ox+22, oy+20, 4, 9)
+    gfx.rect(ox+26, oy+8,  2,  13, 9)
+  elseif name == "terrain" then
+    gfx.rect(ox,    oy,    32, 22, 2)
+    gfx.rect(ox,    oy,    32, 4,  1)
+    for i=0,10 do gfx.rect(ox+i, oy+22-i, 20-i*2+1, 1, 8) end
+    gfx.rect(ox,    oy+22, 32, 10, 31)
+    gfx.rect(ox,    oy+22, 32, 3,  15)
+    gfx.circfill(ox+6,  oy+26, 8, 31)
+    gfx.circfill(ox+22, oy+28, 8, 31)
+    gfx.rect(ox,    oy+22, 32, 3,  15)
+  elseif name == "shelf" then
+    gfx.rect(ox+1,  oy+2,  30, 27, 30)
+    gfx.rect(ox+1,  oy+26, 30, 4,  24)
+    gfx.rect(ox+3,  oy+5,  7,  21, 4)
+    gfx.rect(ox+4,  oy+6,  5,  4,  5)
+    gfx.rect(ox+12, oy+3,  6,  23, 19)
+    gfx.rect(ox+13, oy+4,  4,  4,  18)
+    gfx.rect(ox+20, oy+7,  9,  19, 16)
+    gfx.rect(ox+21, oy+8,  7,  4,  15)
+  elseif name == "snake" then
+    gfx.rect(ox,    oy,    32, 32, 11)
+    gfx.rect(ox+2,  oy+2,  28, 8,  16)
+    gfx.rect(ox+20, oy+10, 8,  10, 15)
+    gfx.rect(ox+2,  oy+12, 20, 8,  16)
+    gfx.rect(ox+2,  oy+20, 8,  10, 15)
+    gfx.rect(ox+2,  oy+22, 28, 8,  16)
+    gfx.rect(ox+22, oy+2,  8,  8,  31)
+    gfx.pset(ox+24, oy+4,  7)
+    gfx.pset(ox+27, oy+4,  7)
+  elseif name == "bouncer" then
+    gfx.circfill(ox+16, oy+13, 12, 4)
+    gfx.circfill(ox+16, oy+13, 10, 5)
+    gfx.circfill(ox+13, oy+10, 4,  6)
+    gfx.circfill(ox+12, oy+9,  2,  7)
+    gfx.rect(ox+7,  oy+26, 18, 3,  10)
+    gfx.rect(ox+10, oy+27, 12, 1,  9)
+    gfx.rect(ox+2,  oy+11, 4,  3,  5)
+  elseif name == "settings" then
+    gfx.circfill(ox+16, oy+16, 9, 9)
+    gfx.rect(ox+14, oy+4,  4, 5, 9)
+    gfx.rect(ox+14, oy+23, 4, 5, 9)
+    gfx.rect(ox+4,  oy+14, 5, 4, 9)
+    gfx.rect(ox+23, oy+14, 5, 4, 9)
+    gfx.circfill(ox+7,  oy+7,  3, 9)
+    gfx.circfill(ox+25, oy+7,  3, 9)
+    gfx.circfill(ox+7,  oy+25, 3, 9)
+    gfx.circfill(ox+25, oy+25, 3, 9)
+    gfx.circfill(ox+16, oy+16, 5, 0)
+    gfx.circfill(ox+16, oy+16, 2, 1)
+  elseif name == "maze3d" then
+    -- perspective corridor
+    gfx.rect(ox,    oy,    32, 32, 1)    -- dark bg
+    gfx.rect(ox,    oy,    32, 4,  2)    -- ceiling strip
+    gfx.rect(ox,    oy+28, 32, 4,  2)    -- floor strip
+    -- vanishing-point walls
+    gfx.line(ox,    oy+4,  ox+14, oy+11, 9)   -- left wall top
+    gfx.line(ox,    oy+28, ox+14, oy+21, 9)   -- left wall bottom
+    gfx.line(ox+32, oy+4,  ox+18, oy+11, 9)   -- right wall top
+    gfx.line(ox+32, oy+28, ox+18, oy+21, 9)   -- right wall bottom
+    -- back face
+    gfx.rect(ox+14, oy+11, 4, 10, 3)
+    -- corridor sides
+    gfx.rect(ox,    oy+4,  14, 7,  8)    -- left top
+    gfx.rect(ox,    oy+21, 14, 7,  8)    -- left bottom
+    gfx.rect(ox+18, oy+4,  14, 7,  8)
+    gfx.rect(ox+18, oy+21, 14, 7,  8)
+    -- player dot + ray lines
+    gfx.pset(ox+15, oy+15, 15)
+    gfx.pset(ox+16, oy+15, 15)
+    gfx.line(ox+15, oy+15, ox+6,  oy+10, 7)
+    gfx.line(ox+16, oy+15, ox+26, oy+10, 7)
+  elseif name == "asteroid" then
+    -- ship triangle in center
+    gfx.line(ox+16, oy+4,  ox+6,  oy+26, 7)
+    gfx.line(ox+16, oy+4,  ox+26, oy+26, 7)
+    gfx.line(ox+9,  oy+22, ox+23, oy+22, 7)
+    -- asteroids (irregular circles)
+    gfx.circfill(ox+5,  oy+10, 4, 9)
+    gfx.circfill(ox+4,  oy+10, 3, 0)
+    gfx.circfill(ox+26, oy+8,  3, 9)
+    gfx.circfill(ox+25, oy+8,  2, 0)
+    gfx.circfill(ox+25, oy+22, 5, 9)
+    gfx.circfill(ox+24, oy+22, 4, 0)
+    -- bullet
+    gfx.pset(ox+16, oy+2, 15)
+  elseif name == "todo" then
+    -- checklist lines
+    gfx.rect(ox+4,  oy+3,  24, 4, 2)
+    gfx.rect(ox+4,  oy+3,  24, 4, 9)
+    gfx.rect(ox+4,  oy+10, 24, 3, 2)
+    gfx.rect(ox+4,  oy+10, 24, 3, 9)
+    gfx.rect(ox+4,  oy+16, 24, 3, 2)
+    gfx.rect(ox+4,  oy+16, 24, 3, 9)
+    gfx.rect(ox+4,  oy+22, 24, 3, 2)
+    gfx.rect(ox+4,  oy+22, 24, 3, 9)
+    -- checkmarks
+    gfx.pset(ox+6,  oy+4,  10); gfx.pset(ox+7,  oy+5,  10); gfx.pset(ox+8,  oy+4,  10)
+    gfx.pset(ox+6,  oy+11, 10); gfx.pset(ox+7,  oy+12, 10); gfx.pset(ox+8,  oy+11, 10)
+    -- heading bar (bright)
+    gfx.rect(ox+4,  oy+28, 24, 3, 15)
+    -- cursor blink stub
+    gfx.rect(ox+10, oy+11, 1,  3,  7)
+  else
+    gfx.circfill(ox+16, oy+16, 12, 9)
+    gfx.print(name:sub(1,1):upper(), ox+12, oy+12, 7)
+  end
+end
+
 -- Compute grid x,y from sequential index (0-based).
 -- Columns fill top-to-bottom, then wrap right.
 local function icon_pos(idx)
@@ -289,6 +495,7 @@ local function icon_pos(idx)
 end
 
 local function refresh_desktop()
+  icon_cache = {}
   icons = {}
   local function add(label, col, action)
     local ix, iy = icon_pos(#icons)
@@ -303,6 +510,10 @@ local function refresh_desktop()
   add("shelf",    6,  function() launch("/apps/shelf.lua")    end)
   add("snake",    16, function() launch("/apps/snake.lua")    end)
   add("bouncer",  4,  function() launch("/apps/bouncer.lua")  end)
+  add("settings", 9,  function() launch("/apps/settings.lua") end)
+  add("asteroid", 7,  function() launch("/apps/asteroid.lua") end)
+  add("todo",     14, function() launch("/apps/todo.lua")     end)
+  add("maze3d",   3,  function() launch("/apps/maze3d.lua")   end)
   if fs.exists("/home/desktop") then
     local list = fs.list("/home/desktop")
     if list then
@@ -847,15 +1058,14 @@ function _draw()
     local flashing = icon_flash[ic.label] and icon_flash[ic.label]>0
     local bg_col   = flashing and 7 or (hover and ic.col+1 or ic.col)
     gfx.rect(ic.x, ic.y, ICON_W, ICON_H, bg_col)
+    draw_app_icon(ic.label, ic.x+8, ic.y+8)
     if hover or flashing then
-      gfx.rect(ic.x,         ic.y,         ICON_W, 1, 7)
-      gfx.rect(ic.x,         ic.y+ICON_H-1,ICON_W, 1, 7)
-      gfx.rect(ic.x,         ic.y,         1, ICON_H, 7)
-      gfx.rect(ic.x+ICON_W-1,ic.y,         1, ICON_H, 7)
+      gfx.rect(ic.x,          ic.y,          ICON_W, 1, 7)
+      gfx.rect(ic.x,          ic.y+ICON_H-1, ICON_W, 1, 7)
+      gfx.rect(ic.x,          ic.y,          1, ICON_H, 7)
+      gfx.rect(ic.x+ICON_W-1, ic.y,          1, ICON_H, 7)
     end
-    gfx.rect(ic.x+ICON_W//2-1, ic.y+4,          3, ICON_H-8, flashing and 1 or 7)
-    gfx.rect(ic.x+4,            ic.y+ICON_H//2-1,ICON_W-8, 3, flashing and 1 or 7)
-    gfx.print(ic.label, ic.x, ic.y+ICON_H+2, 7)
+    gfx.print(ic.label, ic.x, ic.y+ICON_H+2, flashing and 4 or 7)
   end
 
   -- app windows (no scheduler budget on draw — bounded by screen pixels)

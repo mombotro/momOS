@@ -262,7 +262,7 @@ void kernel_main(uint32_t magic, mb1_info_t *mb) {
                     serial_puts("[DISK] loading VFS from HDD (");
                     serial_hex(img_size / 1024);
                     serial_puts(" KB)\n");
-                    vfs_init((uint32_t)(uintptr_t)buf, img_size);
+                    vfs_init((uintptr_t)buf, img_size);
                 } else {
                     if (buf) kfree(buf);
                     serial_puts("[DISK] read failed, using initrd\n");

@@ -36,7 +36,7 @@ static uint32_t kstrlen(const char *s) {
 }
 
 /* ── Init ───────────────────────────────────────────────────────────────────*/
-void vfs_init(uint32_t lfs_phys_addr, uint32_t lfs_size) {
+void vfs_init(uintptr_t lfs_phys_addr, uint32_t lfs_size) {
     /* Use the physical address directly — initrd is already protected by
        phys_reserve so the heap allocator will never touch those frames. */
     if (lfs_size < LFS_BLOCK_SIZE) { serial_puts("[VFS] image too small\n"); return; }

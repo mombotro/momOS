@@ -14,8 +14,9 @@ typedef struct {
     int      is_dir;
 } vfs_dirent_t;
 
-/* Initialise VFS with an LFS image at the given physical address */
-void vfs_init(uint32_t lfs_phys_addr, uint32_t lfs_size);
+/* Initialise VFS with an LFS image at the given physical address.
+   uintptr_t is uint32_t on bare-metal i686, uint64_t on 64-bit hosted. */
+void vfs_init(uintptr_t lfs_phys_addr, uint32_t lfs_size);
 
 /* Open a file by absolute path (e.g. "/sys/config.txt").
    Returns NULL if not found. */

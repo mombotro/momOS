@@ -242,9 +242,7 @@ local function draw_map()
             gfx.rect(sx, sy, tw, th, t % 31 + 1)
           end
         elseif l == 1 then
-          -- empty ground: checkerboard
-          local c = ((tx + ty) % 2 == 0) and 2 or 1
-          gfx.rect(sx, sy, tw, th, c)
+          gfx.rect(sx, sy, tw, th, 11)  -- flat black background
         end
       end
     end
@@ -258,15 +256,15 @@ local function draw_map()
     gfx.print("O", sx + 4, sy + 4, 7)
   end
 
-  -- grid lines
+  -- grid lines (dark gray, visible over black background)
   if zoom >= 2 then
     for tx = tx0, tx1 + 1 do
       local sx = math.floor((tx - cam_x) * tw)
-      gfx.rect(sx, TB_H, 1, VIEW_H, 0)
+      gfx.rect(sx, TB_H, 1, VIEW_H, 10)
     end
     for ty = ty0, ty1 + 1 do
       local sy = math.floor((ty - cam_y) * th) + TB_H
-      gfx.rect(0, sy, VIEW_W, 1, 0)
+      gfx.rect(0, sy, VIEW_W, 1, 10)
     end
   end
 

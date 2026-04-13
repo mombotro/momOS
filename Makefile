@@ -77,6 +77,74 @@ OBJS = kernel/boot/entry.o \
 
 # ── Targets ──────────────────────────────────────────────────────────────────
 
+# ── Hosted (SDL2) mode ────────────────────────────────────────────────────────
+# Builds a native binary using SDL2 instead of bare metal.
+# Requires SDL2 dev headers; on MSYS2: pacman -S mingw-w64-ucrt-x86_64-SDL2
+SDL2_CFLAGS := $(shell sdl2-config --cflags 2>/dev/null || echo "-I/usr/include/SDL2 -D_REENTRANT")
+SDL2_LIBS   := $(shell sdl2-config --libs   2>/dev/null || echo "-lSDL2")
+
+HOSTED_CFLAGS = -std=c11 -O2 -Wall -Wextra -DHOSTED -Ikernel $(SDL2_CFLAGS)
+HOSTED_LUACFLAGS = -std=c99 -O2 -w -DHOSTED -Ikernel -I lua
+
+# Hosted LUA objects (built with hosted flags, no compat layer)
+HOSTED_LUA_OBJS = $(patsubst lua/%.c,hosted_obj/lua/%.o,$(LUA_SRCS))
+
+# Hosted kernel objects
+HOSTED_OBJS = \
+    hosted_obj/hosted/hal.o \
+    hosted_obj/hosted/main.o \
+    hosted_obj/vfs/vfs.o \
+    hosted_obj/wm/wm.o \
+    hosted_obj/ipc/msgqueue.o \
+    hosted_obj/proc/process.o \
+    hosted_obj/proc/scheduler.o \
+    hosted_obj/audio/mixer.o \
+    hosted_obj/lua/klua.o \
+    hosted_obj/lua/linit_kernel.o \
+    $(HOSTED_LUA_OBJS)
+
+hosted: momos initrd.lfs
+
+momos: $(HOSTED_OBJS)
+	$(HOSTCC) -o $@ $^ $(SDL2_LIBS) -lm
+
+# Rules for hosted objects
+hosted_obj/hosted/%.o: kernel/hosted/%.c
+	@mkdir -p $(dir $@)
+	$(HOSTCC) $(HOSTED_CFLAGS) -c $< -o $@
+
+hosted_obj/vfs/%.o: kernel/vfs/%.c
+	@mkdir -p $(dir $@)
+	$(HOSTCC) $(HOSTED_CFLAGS) -c $< -o $@
+
+hosted_obj/wm/%.o: kernel/wm/%.c
+	@mkdir -p $(dir $@)
+	$(HOSTCC) $(HOSTED_CFLAGS) -c $< -o $@
+
+hosted_obj/ipc/%.o: kernel/ipc/%.c
+	@mkdir -p $(dir $@)
+	$(HOSTCC) $(HOSTED_CFLAGS) -I lua -c $< -o $@
+
+hosted_obj/proc/%.o: kernel/proc/%.c
+	@mkdir -p $(dir $@)
+	$(HOSTCC) $(HOSTED_CFLAGS) -I lua -c $< -o $@
+
+hosted_obj/audio/%.o: kernel/audio/%.c
+	@mkdir -p $(dir $@)
+	$(HOSTCC) $(HOSTED_CFLAGS) -c $< -o $@
+
+hosted_obj/lua/klua.o: kernel/lua/klua.c
+	@mkdir -p $(dir $@)
+	$(HOSTCC) $(HOSTED_LUACFLAGS) -Ikernel -I lua -c $< -o $@
+
+hosted_obj/lua/linit_kernel.o: kernel/lua/linit_kernel.c
+	@mkdir -p $(dir $@)
+	$(HOSTCC) $(HOSTED_LUACFLAGS) -Ikernel -c $< -o $@
+
+hosted_obj/lua/%.o: lua/%.c
+	@mkdir -p $(dir $@)
+	$(HOSTCC) $(HOSTED_LUACFLAGS) -c $< -o $@
+
 all: kernel.bin tools/mklfs tools/lfs_inspect tools/mkdisk initrd.lfs
 
 # ── Host tools ────────────────────────────────────────────────────────────────
@@ -181,6 +249,22 @@ run: kernel.bin initrd.lfs disk.img
 	        -drive format=raw,file=disk.img -serial stdio \
 	        -device AC97,audiodev=snd0 -audiodev sdl,id=snd0
 
+run-hosted: momos initrd.lfs disk.img
+	./momos
+
+# ── Distributable Windows build ───────────────────────────────────────────────
+# Produces dist/ with momos.exe + SDL2.dll + initrd.lfs + a fresh disk.img.
+# Zip it up and run on any Windows machine (no MSYS2 needed).
+SDL2_DLL ?= /ucrt64/bin/SDL2.dll
+
+dist: momos initrd.lfs disk.img
+	mkdir -p dist
+	cp momos.exe dist/momos.exe 2>/dev/null || cp momos dist/momos.exe
+	cp $(SDL2_DLL) dist/SDL2.dll
+	cp initrd.lfs  dist/initrd.lfs
+	cp disk.img    dist/disk.img
+	@echo "dist/ ready — copy the folder and run momos.exe"
+
 run-serial: kernel.bin
 	$(QEMU) -kernel kernel.bin -m 64M -nographic -serial stdio
 
@@ -205,11 +289,11 @@ clean:
 	      kernel/disk/ata_pio.o kernel/disk/disk.o \
 	      kernel/lua/klua.o kernel/lua/linit_kernel.o \
 	      $(COMPAT_OBJS) $(LUA_OBJS) \
-	      kernel.bin momos.iso
-	rm -rf iso
+	      kernel.bin momos.iso momos momos.exe
+	rm -rf iso hosted_obj dist
 
 # Remove the disk image (loses all saved state)
 clean-disk:
 	rm -f disk.img
 
-.PHONY: all run run-iso run-serial iso test clean clean-disk
+.PHONY: all hosted dist run run-hosted run-iso run-serial iso test clean clean-disk

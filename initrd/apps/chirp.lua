@@ -67,6 +67,7 @@ local playing    = false
 local play_order = 1    -- current position in song order
 local play_row   = 1    -- current row in pattern
 local tick_timer = 0    -- ticks until next row
+local scroll     = 0    -- first visible row (hoisted: used inside advance_play)
 
 -- Ticks per second = bpm * ticks_per_row / 60
 -- At 60 Hz PIT: ticks_per_second = 60
@@ -109,7 +110,8 @@ local function advance_play()
   if tick_timer > 0 then return end
   tick_timer = ticks_per_row_frames()
 
-  -- play current row
+  -- stop previous row's notes, then play current row
+  if audio then audio.stop_all() end
   local pat_idx = song.order[play_order] or 1
   local pat = song.patterns[pat_idx]
   if pat then
@@ -142,7 +144,6 @@ local cur_row   = 1     -- cursor row
 local cur_ch    = 1     -- cursor channel (1-4)
 local cur_field = 1     -- 1=note 2=inst 3=vol 4=fx
 local cur_inst  = 1     -- selected instrument
-local scroll    = 0     -- first visible row
 local view_mode = "pattern"  -- "pattern", "song", "instrument"
 
 local filepath  = nil; local modified = false

@@ -1,0 +1,71 @@
+Chirp — music tracker
+=====================
+
+OVERVIEW
+  4-channel tracker with 32 rows per pattern.
+  Up to 64 patterns in a song order list.
+  16 instruments (square / saw / triangle / noise).
+
+LAYOUT
+  Top bar        filename, play state, current pattern
+  Song strip     order list + BPM display
+  Pattern editor 4 channels × 32 rows
+  Instrument panel (right)  instrument list + selected params
+  Status bar     hints / command mode
+
+PLAYBACK
+  Space          play from top / stop
+  + / -          increase / decrease BPM by 5
+  [ / ]          prev / next pattern
+
+NAVIGATION
+  Arrow keys     move cursor
+  Tab            next channel (right)
+  Shift+Tab      prev channel (left)
+
+NOTE ENTRY  (cursor must be in NOTE column)
+  Key layout (piano-style, row):
+    a  = C    w = C#   s = D    e = D#   d = E
+    f  = F    t = F#   g = G    y = G#   h = A
+    u  = A#   j = B
+
+  , / .          octave down / up
+  Del or Back    clear cell (sets note=0)
+
+  Notes auto-stop at the end of each row during playback.
+  Place a note in every row where you want it to sound.
+
+INSTRUMENT COLUMN
+  After entering a note, set instrument with 1-9 (selects inst 1-9).
+  Click instrument in right panel to select.
+
+INSTRUMENT PARAMETERS (right panel)
+  WAV  waveform: SQR SAW TRI NSE
+  VOL  base volume (0-255)
+  ATK  attack frames
+  SUS  sustain level
+  REL  release frames
+
+  Change wave with Shift+1/2/3/4 (!@#$) while that instrument selected.
+
+SONG ORDER
+  The order strip shows which pattern plays at each position.
+  song_length controls how many positions play before looping.
+  Edit order via command mode.
+
+COMMAND MODE  (press Esc to enter)
+  :w [path]      save  (default .msm extension)
+  :o <path>      open
+  :q             quit
+  :wq            save and quit
+  :bpm <n>       set BPM (1-255)
+  :tpr <n>       set ticks-per-row (1-16, affects feel)
+
+SAVE / LOAD
+  Ctrl+S         quick save (if file already named)
+  Files saved as .msm in any VFS path.
+  Ctrl+S from desktop saves VFS to disk.
+
+FILE FORMAT
+  .msm   momOS Sound Module
+         Header + 16 instruments + 64-slot order + pattern data
