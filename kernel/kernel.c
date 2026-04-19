@@ -163,6 +163,18 @@ static void vfs_print_entry(const vfs_dirent_t *e, void *ud) {
     serial_puts("\n");
 }
 
+static int kstr_contains(const char *haystack, const char *needle, int nlen) {
+    if (!haystack) return 0;
+    for (; *haystack; haystack++) {
+        int match = 1;
+        for (int i = 0; i < nlen; i++) {
+            if (haystack[i] != needle[i]) { match = 0; break; }
+        }
+        if (match) return 1;
+    }
+    return 0;
+}
+
 /* ── Kernel entry ────────────────────────────────────────────────────────────*/
 void kernel_main(uint32_t magic, mb1_info_t *mb) {
     serial_init();
@@ -274,14 +286,26 @@ void kernel_main(uint32_t magic, mb1_info_t *mb) {
     /* Lua VM */
     klua_init(backbuf, fb_w, fb_h, pal);
 
-    /* Load and run main script from initrd */
-    char *script = vfs_read_alloc("/sys/main.lua");
+    /* Check multiboot cmdline for boot_mode=install */
+    int install_mode = 0;
+    if (mb->flags & (1u << 2)) {
+        const char *cmd = (const char *)mb->cmdline;
+        install_mode = kstr_contains(cmd, "boot_mode=install", 17);
+    }
+
+    /* Load and run main script */
+    const char *script_path = install_mode ? "/apps/installer.lua" : "/sys/main.lua";
+    char *script = vfs_read_alloc(script_path);
     if (script) {
-        serial_puts("[LUA] running /sys/main.lua\n");
+        serial_puts("[LUA] running ");
+        serial_puts(script_path);
+        serial_putc('\n');
         klua_run(script);
         kfree(script);
     } else {
-        serial_puts("[LUA] /sys/main.lua not found\n");
+        serial_puts("[LUA] script not found: ");
+        serial_puts(script_path);
+        serial_putc('\n');
     }
 
     serial_puts("=== boot OK ===\n");
