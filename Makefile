@@ -276,7 +276,7 @@ tools/test_vfs: tools/test_vfs.c kernel/vfs/lfs_format.h kernel/vfs/vfs.h kernel
 	$(HOSTCC) -std=c11 -O2 -Wall -Wno-unused-function \
 	          -I. -o $@ tools/test_vfs.c
 
-tools/test_ipc: tools/test_ipc.c kernel/ipc/msgqueue.h $(LUA_SRCS)
+tools/test_ipc: tools/test_ipc.c kernel/ipc/msgqueue.c kernel/ipc/msgqueue.h $(LUA_SRCS)
 	$(HOSTCC) -std=c11 -O2 -Wall -Wno-unused-function \
 	          -I. -Ikernel -Ilua \
 	          tools/test_ipc.c $(LUA_SRCS) -lm -o $@

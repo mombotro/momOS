@@ -34,9 +34,15 @@ static int tests_run = 0, tests_passed = 0, tests_failed = 0;
 
 #define SECTION(name) printf("\n[%s]\n", name)
 
+static void drain_queue(lua_State *L, const char *name) {
+    while (ipc_recv(L, name)) lua_pop(L, 2);
+}
+
 int main(void) {
     lua_State *L = luaL_newstate();
     if (!L) { fprintf(stderr, "luaL_newstate failed\n"); return 1; }
+
+    printf("=== momOS IPC unit tests ===\n");
 
     /* ── open/close ────────────────────────────────────────────────────────── */
     SECTION("open/close");
@@ -50,6 +56,7 @@ int main(void) {
 
     /* ── send/recv: string ─────────────────────────────────────────────────── */
     SECTION("send/recv string");
+    drain_queue(L, "q");
     ipc_init();
     ipc_queue_open("q");
     lua_pushstring(L, "hello");
@@ -64,6 +71,7 @@ int main(void) {
 
     /* ── send/recv: number ─────────────────────────────────────────────────── */
     SECTION("send/recv number");
+    drain_queue(L, "q");
     ipc_init();
     ipc_queue_open("q");
     lua_pushnumber(L, 42.0);
@@ -74,6 +82,7 @@ int main(void) {
 
     /* ── send/recv: table ──────────────────────────────────────────────────── */
     SECTION("send/recv table");
+    drain_queue(L, "q");
     ipc_init();
     ipc_queue_open("q");
     lua_newtable(L);
@@ -87,6 +96,7 @@ int main(void) {
 
     /* ── pending count ─────────────────────────────────────────────────────── */
     SECTION("pending count");
+    drain_queue(L, "q");
     ipc_init();
     ipc_queue_open("q");
     for (int i = 0; i < 5; i++) {
@@ -99,6 +109,7 @@ int main(void) {
 
     /* ── queue full ────────────────────────────────────────────────────────── */
     SECTION("queue full (64)");
+    drain_queue(L, "q");
     ipc_init();
     ipc_queue_open("q");
     for (int i = 0; i < 64; i++) {
@@ -108,17 +119,19 @@ int main(void) {
     /* 65th send: full → returns -1, does NOT pop the value */
     lua_pushinteger(L, 999);
     CHECK(ipc_send(L, "q", "s") == -1);
-    lua_pop(L, 1);   /* clean up the unpoped value */
+    lua_pop(L, 1);   /* clean up unpopped value */
 
     /* ── send to nonexistent queue ─────────────────────────────────────────── */
     SECTION("send to nonexistent");
+    drain_queue(L, "q");
     ipc_init();
     lua_pushstring(L, "data");
     CHECK(ipc_send(L, "nobody", "s") == -1);
-    lua_pop(L, 1);   /* clean up unpoped value */
+    lua_pop(L, 1);   /* clean up unpopped value */
 
     /* ── recv from empty queue ─────────────────────────────────────────────── */
     SECTION("recv from empty");
+    drain_queue(L, "q");
     ipc_init();
     ipc_queue_open("q");
     CHECK(ipc_recv(L, "q") == 0);   /* returns 0, pushes nothing */
