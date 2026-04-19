@@ -268,16 +268,23 @@ dist: momos initrd.lfs disk.img
 run-serial: kernel.bin
 	$(QEMU) -kernel kernel.bin -m 64M -nographic -serial stdio
 
-test: tools/test_vfs
+test: tools/test_vfs tools/test_ipc
 	./tools/test_vfs
+	./tools/test_ipc
 
 tools/test_vfs: tools/test_vfs.c kernel/vfs/lfs_format.h kernel/vfs/vfs.h kernel/vfs/vfs.c
 	$(HOSTCC) -std=c11 -O2 -Wall -Wno-unused-function \
 	          -I. -o $@ tools/test_vfs.c
 
+tools/test_ipc: tools/test_ipc.c kernel/ipc/msgqueue.h $(LUA_SRCS)
+	$(HOSTCC) -std=c11 -O2 -Wall -Wno-unused-function \
+	          -I. -Ikernel -Ilua \
+	          tools/test_ipc.c $(LUA_SRCS) -lm -o $@
+
 clean:
 	rm -f tools/mklfs tools/mklfs.exe tools/lfs_inspect tools/lfs_inspect.exe \
-	      tools/mkdisk tools/mkdisk.exe tools/test_vfs tools/test_vfs.exe initrd.lfs
+	      tools/mkdisk tools/mkdisk.exe tools/test_vfs tools/test_vfs.exe \
+	      tools/test_ipc tools/test_ipc.exe initrd.lfs
 	rm -f kernel/boot/entry.o kernel/kernel.o \
 	      kernel/cpu/cpu.o kernel/cpu/isr.o kernel/cpu/setjmp.o \
 	      kernel/cpu/serial.o kernel/cpu/gdt.o kernel/cpu/idt.o kernel/cpu/pit.o kernel/cpu/acpi.o \
