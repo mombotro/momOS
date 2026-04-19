@@ -232,6 +232,38 @@ iso:
 	grub-mkrescue -o momos.iso iso
 	rm -rf iso
 
+cd: kernel.bin initrd.lfs
+	mkdir -p iso/boot/grub
+	cp kernel.bin iso/boot/kernel.bin
+	cp initrd.lfs iso/boot/initrd.lfs
+	cat > iso/boot/grub/grub.cfg << 'GRUBEOF'
+set timeout=5
+set default=0
+set gfxmode=1024x600x32,1024x600x24,800x600x32,800x600x24,640x480x32,640x480
+set gfxpayload=keep
+
+menuentry "momOS Live" {
+	multiboot /boot/kernel.bin
+	module /boot/initrd.lfs
+	boot
+}
+
+menuentry "momOS Install" {
+	multiboot /boot/kernel.bin boot_mode=install
+	module /boot/initrd.lfs
+	boot
+}
+
+menuentry "Memory Test (not included)" {
+	echo "No memtest in this build."
+	sleep 3
+	reboot
+}
+GRUBEOF
+	grub-mkrescue -o momos.iso iso
+	rm -rf iso
+	@echo "momos.iso ready (Live + Install + Memtest stub)"
+
 # ── GRUB blob extraction (run from WSL2) ──────────────────────────────────────
 # Requires: sudo apt install grub-pc-bin grub-common (already needed for iso)
 grub-blobs:
@@ -242,6 +274,36 @@ grub-blobs:
 	    -p "(hd0,msdos1)/boot/grub" \
 	    biosdisk part_msdos normal echo ls cat configfile
 	@echo "GRUB blobs written to initrd/sys/boot/"
+
+# ── Floppy images (run from WSL2) ─────────────────────────────────────────────
+# Requires: sudo apt install syslinux syslinux-common dosfstools mtools
+#
+# Floppy 1: install disk - Tier 1 apps only (fits 1.44 MB)
+TIER2_APPS = initrd/apps/maze3d.lua initrd/apps/asteroid.lua \
+             initrd/apps/bouncer.lua initrd/apps/snake.lua
+
+floppy-install: kernel.bin tools/mklfs
+	rm -rf /tmp/momos-t1 && cp -r initrd /tmp/momos-t1
+	rm -f /tmp/momos-t1/apps/maze3d.lua /tmp/momos-t1/apps/asteroid.lua \
+	      /tmp/momos-t1/apps/bouncer.lua /tmp/momos-t1/apps/snake.lua
+	./tools/mklfs /tmp/momos-t1 initrd-t1.lfs
+	rm -f momos-install.img
+	dd if=/dev/zero of=momos-install.img bs=1024 count=1440
+	mkdosfs -F 12 momos-install.img
+	syslinux --install momos-install.img
+	mcopy -i momos-install.img /usr/lib/syslinux/modules/bios/mboot.c32 ::
+	mcopy -i momos-install.img kernel.bin ::
+	mcopy -i momos-install.img initrd-t1.lfs ::
+	printf 'DEFAULT momOS\nLABEL momOS\n  KERNEL mboot.c32\n  APPEND kernel.bin --- initrd-t1.lfs\n' > /tmp/syslinux.cfg
+	mcopy -i momos-install.img /tmp/syslinux.cfg ::syslinux.cfg
+	@echo "momos-install.img ready (1.44 MB floppy)"
+
+# Floppy 2: app disk - bare LFS image with Tier 2 apps
+floppy-apps: tools/mklfs
+	mkdir -p /tmp/momos-apps/apps
+	cp $(TIER2_APPS) /tmp/momos-apps/apps/
+	./tools/mklfs /tmp/momos-apps momos-apps.img
+	@echo "momos-apps.img ready"
 
 # ── Run targets (run these from MSYS2) ────────────────────────────────────────
 
@@ -314,4 +376,4 @@ clean:
 clean-disk:
 	rm -f disk.img
 
-.PHONY: all hosted dist run run-hosted run-iso run-serial iso grub-blobs test clean clean-disk
+.PHONY: all hosted dist run run-hosted run-iso run-serial iso cd grub-blobs floppy-install floppy-apps test clean clean-disk
