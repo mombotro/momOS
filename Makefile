@@ -232,6 +232,17 @@ iso:
 	grub-mkrescue -o momos.iso iso
 	rm -rf iso
 
+# ── GRUB blob extraction (run from WSL2) ──────────────────────────────────────
+# Requires: sudo apt install grub-pc-bin grub-common (already needed for iso)
+grub-blobs:
+	mkdir -p initrd/sys/boot
+	dd if=/usr/lib/grub/i386-pc/boot.img of=initrd/sys/boot/mbr.bin bs=446 count=1
+	grub-mkimage -O i386-pc \
+	    -o initrd/sys/boot/core.img \
+	    -p "(hd0,msdos1)/boot/grub" \
+	    biosdisk part_msdos normal echo ls cat configfile
+	@echo "GRUB blobs written to initrd/sys/boot/"
+
 # ── Run targets (run these from MSYS2) ────────────────────────────────────────
 
 run-iso: momos.iso disk.img
@@ -303,4 +314,4 @@ clean:
 clean-disk:
 	rm -f disk.img
 
-.PHONY: all hosted dist run run-hosted run-iso run-serial iso test clean clean-disk
+.PHONY: all hosted dist run run-hosted run-iso run-serial iso grub-blobs test clean clean-disk
