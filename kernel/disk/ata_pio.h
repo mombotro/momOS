@@ -18,3 +18,7 @@ int  ata_write(int drv, uint32_t lba, uint32_t count, const void *buf);
 
 /* Total sector count for drive 'drv', or 0 if not present. */
 uint32_t ata_sector_count(int drv);
+
+/* Copy null-terminated model string (max 40 chars + NUL) for drive 'drv' into buf[41].
+   buf[0] = '\0' if drive not present. */
+void ata_model(int drv, char buf[41]);

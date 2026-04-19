@@ -40,9 +40,10 @@ static const uint16_t chan_ctrl[2] = { 0x3F6, 0x376 };  /* alt-status / ctrl  */
 /* Per-drive state: channel (0/1), which drive on channel (0/1), total sectors */
 typedef struct {
     int      present;
-    uint8_t  chan;    /* 0 = primary, 1 = secondary */
-    uint8_t  slave;   /* 0 = master, 1 = slave */
-    uint32_t sectors; /* LBA28 sector count from IDENTIFY */
+    uint8_t  chan;       /* 0 = primary, 1 = secondary */
+    uint8_t  slave;      /* 0 = master, 1 = slave */
+    uint32_t sectors;    /* LBA28 sector count from IDENTIFY */
+    char     model[41];  /* null-terminated model string from IDENTIFY words 27-46 */
 } ata_drive_t;
 
 static ata_drive_t drives[4];  /* 0=pm,1=ps,2=sm,3=ss */
@@ -91,7 +92,7 @@ static int ata_select(int drv) {
 }
 
 /* ── IDENTIFY ────────────────────────────────────────────────────────────────*/
-static int ata_identify(uint8_t chan, uint8_t slave, uint32_t *sectors_out) {
+static int ata_identify(uint8_t chan, uint8_t slave, uint32_t *sectors_out, char model_out[41]) {
     uint16_t b = chan_base[chan];
     /* Select drive */
     outb(b + REG_DRVHEAD, 0xA0 | (slave << 4));
@@ -127,6 +128,15 @@ static int ata_identify(uint8_t chan, uint8_t slave, uint32_t *sectors_out) {
 
     /* Words 60-61 = LBA28 total sectors */
     *sectors_out = ((uint32_t)id[61] << 16) | id[60];
+
+    /* Words 27-46 = model string, byte-swapped per 16-bit word */
+    for (int i = 0; i < 20; i++) {
+        model_out[i * 2]     = (char)((id[27 + i] >> 8) & 0xFF);
+        model_out[i * 2 + 1] = (char)(id[27 + i] & 0xFF);
+    }
+    model_out[40] = '\0';
+    /* Trim trailing spaces */
+    for (int i = 39; i >= 0 && model_out[i] == ' '; i--) model_out[i] = '\0';
     return 1;
 }
 
@@ -137,11 +147,13 @@ int ata_init(void) {
         for (uint8_t sl = 0; sl < 2; sl++) {
             int drv = c * 2 + sl;
             uint32_t secs = 0;
-            if (ata_identify(c, sl, &secs)) {
+            char model[41] = {0};
+            if (ata_identify(c, sl, &secs, model)) {
                 drives[drv].present = 1;
                 drives[drv].chan    = c;
                 drives[drv].slave  = sl;
                 drives[drv].sectors = secs;
+                for (int mi = 0; mi < 41; mi++) drives[drv].model[mi] = model[mi];
                 found++;
                 serial_puts("[ATA] drive ");
                 serial_hex(drv);
@@ -157,6 +169,11 @@ int ata_init(void) {
 uint32_t ata_sector_count(int drv) {
     if (drv < 0 || drv > 3 || !drives[drv].present) return 0;
     return drives[drv].sectors;
+}
+
+void ata_model(int drv, char buf[41]) {
+    if (drv < 0 || drv > 3 || !drives[drv].present) { buf[0] = '\0'; return; }
+    for (int i = 0; i < 41; i++) buf[i] = drives[drv].model[i];
 }
 
 /* ── Read ────────────────────────────────────────────────────────────────────*/
