@@ -168,7 +168,7 @@ static int kstr_contains(const char *haystack, const char *needle, int nlen) {
     for (; *haystack; haystack++) {
         int match = 1;
         for (int i = 0; i < nlen; i++) {
-            if (haystack[i] != needle[i]) { match = 0; break; }
+            if (!haystack[i] || haystack[i] != needle[i]) { match = 0; break; }
         }
         if (match) return 1;
     }
