@@ -15,6 +15,7 @@
 #include "../proc/scheduler.h"
 #include "../audio/audio.h"
 #include "../disk/disk.h"
+#include "../disk/ata_pio.h"
 #include "../lua/lua.h"
 #include "../lua/lauxlib.h"
 #include "../lua/lualib.h"
@@ -443,6 +444,116 @@ static int l_sys_reboot(lua_State *ls) {
     return 0;
 }
 
+/* sys.disk_scan() → array of {index, size_mb, model}
+   Reports all present ATA drives (0-3). */
+static int l_sys_disk_scan(lua_State *ls) {
+    lua_newtable(ls);
+    int n = 0;
+    for (int d = 0; d < 4; d++) {
+        uint32_t secs = ata_sector_count(d);
+        if (!secs) continue;
+        char model[41];
+        ata_model(d, model);
+        n++;
+        lua_newtable(ls);
+        lua_pushinteger(ls, d);
+        lua_setfield(ls, -2, "index");
+        lua_pushinteger(ls, (lua_Integer)(secs / 2048)); /* 512-byte sectors → MB */
+        lua_setfield(ls, -2, "size_mb");
+        lua_pushstring(ls, model[0] ? model : "Unknown");
+        lua_setfield(ls, -2, "model");
+        lua_rawseti(ls, -2, n);
+    }
+    return 1;
+}
+
+/* sys.disk_write_raw(drive, lba, data) → bool, errmsg
+   Writes data string to LBA on drive.
+   len == 512: write directly.
+   len < 512: read-modify-write (patches bytes 0..len-1).
+   len > 512: error. */
+static int l_sys_disk_write_raw(lua_State *ls) {
+    int drv = (int)luaL_checkinteger(ls, 1);
+    uint32_t lba = (uint32_t)luaL_checkinteger(ls, 2);
+    size_t dlen;
+    const char *data = luaL_checklstring(ls, 3, &dlen);
+
+    if (dlen > 512) {
+        lua_pushboolean(ls, 0);
+        lua_pushstring(ls, "data too large (max 512 bytes)");
+        return 2;
+    }
+
+    uint8_t buf[512];
+    if (dlen < 512) {
+        if (ata_read(drv, lba, 1, buf) != 0) {
+            lua_pushboolean(ls, 0);
+            lua_pushstring(ls, "read error");
+            return 2;
+        }
+    }
+    for (size_t i = 0; i < dlen; i++) buf[i] = (uint8_t)data[i];
+
+    if (ata_write(drv, lba, 1, buf) != 0) {
+        lua_pushboolean(ls, 0);
+        lua_pushstring(ls, "write error");
+        return 2;
+    }
+    lua_pushboolean(ls, 1);
+    lua_pushnil(ls);
+    return 2;
+}
+
+/* sys.disk_write_mbr(drive, lba_start, size_sectors) → bool, errmsg
+   Writes partition table to sector 0 of drive:
+     bytes 0-445:   boot code preserved (filled later by disk_write_raw)
+     bytes 446-461: partition entry 0 (bootable, type 0x4C LFS)
+     bytes 462-509: partition entries 1-3 (zeroed)
+     bytes 510-511: 0x55 0xAA MBR magic */
+static int l_sys_disk_write_mbr(lua_State *ls) {
+    int drv            = (int)luaL_checkinteger(ls, 1);
+    uint32_t lba_start = (uint32_t)luaL_checkinteger(ls, 2);
+    uint32_t size_secs = (uint32_t)luaL_checkinteger(ls, 3);
+
+    uint8_t mbr[512];
+
+    /* Read existing sector 0 to preserve boot code bytes 0-445 */
+    if (ata_read(drv, 0, 1, mbr) != 0) {
+        for (int i = 0; i < 446; i++) mbr[i] = 0;
+    }
+
+    /* Zero partition table area */
+    for (int i = 446; i < 510; i++) mbr[i] = 0;
+
+    /* Partition entry 0 at offset 446 */
+    uint8_t *p = mbr + 446;
+    p[0] = 0x80;           /* bootable */
+    p[1] = 0xFE; p[2] = 0xFF; p[3] = 0xFF; /* CHS first (LBA mode) */
+    p[4] = 0x4C;           /* type: momOS LFS */
+    p[5] = 0xFE; p[6] = 0xFF; p[7] = 0xFF; /* CHS last */
+    p[8]  = (uint8_t)(lba_start);
+    p[9]  = (uint8_t)(lba_start >> 8);
+    p[10] = (uint8_t)(lba_start >> 16);
+    p[11] = (uint8_t)(lba_start >> 24);
+    p[12] = (uint8_t)(size_secs);
+    p[13] = (uint8_t)(size_secs >> 8);
+    p[14] = (uint8_t)(size_secs >> 16);
+    p[15] = (uint8_t)(size_secs >> 24);
+
+    /* MBR magic */
+    mbr[510] = 0x55;
+    mbr[511] = 0xAA;
+
+    if (ata_write(drv, 0, 1, mbr) != 0) {
+        lua_pushboolean(ls, 0);
+        lua_pushstring(ls, "write error");
+        return 2;
+    }
+    lua_pushboolean(ls, 1);
+    lua_pushnil(ls);
+    return 2;
+}
+
 static const luaL_Reg sys_lib[] = {
     {"ticks",       l_sys_ticks},
     {"mem",         l_sys_mem},
@@ -458,6 +569,9 @@ static const luaL_Reg sys_lib[] = {
     {"reboot",      l_sys_reboot},
     {"audio_info",  l_sys_audio_info},
     {"time",        l_sys_time},
+    {"disk_scan",       l_sys_disk_scan},
+    {"disk_write_raw",  l_sys_disk_write_raw},
+    {"disk_write_mbr",  l_sys_disk_write_mbr},
     {NULL, NULL}
 };
 
