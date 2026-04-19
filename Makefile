@@ -261,8 +261,7 @@ TIER2_APPS = initrd/apps/maze3d.lua initrd/apps/asteroid.lua \
 
 floppy-install: kernel.bin tools/mklfs
 	rm -rf /tmp/momos-t1 && cp -r initrd /tmp/momos-t1
-	rm -f /tmp/momos-t1/apps/maze3d.lua /tmp/momos-t1/apps/asteroid.lua \
-	      /tmp/momos-t1/apps/bouncer.lua /tmp/momos-t1/apps/snake.lua
+	rm -f $(patsubst initrd/%,/tmp/momos-t1/%,$(TIER2_APPS))
 	./tools/mklfs /tmp/momos-t1 initrd-t1.lfs
 	rm -f momos-install.img
 	dd if=/dev/zero of=momos-install.img bs=1024 count=1440
@@ -277,7 +276,7 @@ floppy-install: kernel.bin tools/mklfs
 
 # Floppy 2: app disk - bare LFS image with Tier 2 apps
 floppy-apps: tools/mklfs
-	mkdir -p /tmp/momos-apps/apps
+	rm -rf /tmp/momos-apps && mkdir -p /tmp/momos-apps/apps
 	cp $(TIER2_APPS) /tmp/momos-apps/apps/
 	./tools/mklfs /tmp/momos-apps momos-apps.img
 	@echo "momos-apps.img ready"
