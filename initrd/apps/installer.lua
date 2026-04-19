@@ -110,6 +110,12 @@ local function do_install()
     end
 
     if install_step == 3 then
+        local ok, err = sys.save()
+        if not ok then
+            state  = "error"
+            errmsg = "Pre-cfg save failed: " .. (err or "?")
+            return
+        end
         local res = SCREEN_W .. "x" .. SCREEN_H .. "x32"
         local cfg = string.format(
             "set timeout=5\nset default=0\n" ..
@@ -178,7 +184,13 @@ function _update()
         if ch == "\r" or ch == "\n" then sys.reboot() end
 
     elseif state == "error" then
-        if ch == "r" or ch == "R" then sys.reboot() end
+        if ch == "r" or ch == "R" then
+            errmsg       = nil
+            install_step = 0
+            state        = "install"
+        elseif ch == "q" or ch == "Q" then
+            sys.reboot()
+        end
     end
 end
 
@@ -231,6 +243,6 @@ function _draw()
     elseif state == "error" then
         draw_centered("Installation failed.", mid - 20, HI)
         if errmsg then draw_centered(errmsg, mid + 4, DIM) end
-        draw_centered("Press R to reboot.", mid + 24, DIM)
+        draw_centered("Press R to retry  or  Q to reboot.", mid + 24, DIM)
     end
 end
