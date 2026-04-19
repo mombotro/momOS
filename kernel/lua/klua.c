@@ -316,9 +316,10 @@ static int l_sys_disk_ready(lua_State *ls) {
 }
 
 /* sys.save() → bool, errmsg
-   Snapshot the in-memory VFS image to the HDD LFS partition. */
+   Snapshot the in-memory VFS image to the HDD LFS partition.
+   Only writes sectors that differ from what is already on disk. */
 static int l_sys_save(lua_State *ls) {
-    if (disk_drive() < 0) { /* no drive configured at all */
+    if (disk_drive() < 0) {
         lua_pushboolean(ls, 0);
         lua_pushstring(ls, "no disk");
         return 2;
@@ -330,17 +331,41 @@ static int l_sys_save(lua_State *ls) {
         lua_pushstring(ls, "VFS not mounted");
         return 2;
     }
-    /* Round size up to next 512-byte boundary */
     uint32_t aligned = (size + 511) & ~511u;
     if (aligned > disk_lfs_size()) {
         lua_pushboolean(ls, 0);
         lua_pushstring(ls, "VFS too large for partition");
         return 2;
     }
-    int r = disk_lfs_write(base, 0, aligned);
-    lua_pushboolean(ls, r == 0);
-    if (r != 0) lua_pushstring(ls, "write error");
-    else        lua_pushnil(ls);
+
+    uint8_t tmp[512];
+    uint32_t sectors = aligned / 512;
+
+    for (uint32_t i = 0; i < sectors; i++) {
+        uint8_t *src = (uint8_t *)base + i * 512;
+        uint32_t off = i * 512;
+
+        if (disk_lfs_read(tmp, off, 512) != 0) {
+            lua_pushboolean(ls, 0);
+            lua_pushstring(ls, "read error during diff");
+            return 2;
+        }
+
+        int differs = 0;
+        for (int b = 0; b < 512; b++) {
+            if (src[b] != tmp[b]) { differs = 1; break; }
+        }
+        if (!differs) continue;
+
+        if (disk_lfs_write(src, off, 512) != 0) {
+            lua_pushboolean(ls, 0);
+            lua_pushstring(ls, "write error");
+            return 2;
+        }
+    }
+
+    lua_pushboolean(ls, 1);
+    lua_pushnil(ls);
     return 2;
 }
 
