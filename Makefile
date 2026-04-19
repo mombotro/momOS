@@ -236,30 +236,7 @@ cd: kernel.bin initrd.lfs
 	mkdir -p iso/boot/grub
 	cp kernel.bin iso/boot/kernel.bin
 	cp initrd.lfs iso/boot/initrd.lfs
-	cat > iso/boot/grub/grub.cfg << 'GRUBEOF'
-set timeout=5
-set default=0
-set gfxmode=1024x600x32,1024x600x24,800x600x32,800x600x24,640x480x32,640x480
-set gfxpayload=keep
-
-menuentry "momOS Live" {
-	multiboot /boot/kernel.bin
-	module /boot/initrd.lfs
-	boot
-}
-
-menuentry "momOS Install" {
-	multiboot /boot/kernel.bin boot_mode=install
-	module /boot/initrd.lfs
-	boot
-}
-
-menuentry "Memory Test (not included)" {
-	echo "No memtest in this build."
-	sleep 3
-	reboot
-}
-GRUBEOF
+	printf 'set timeout=5\nset default=0\nset gfxmode=1024x600x32,1024x600x24,800x600x32,800x600x24,640x480x32,640x480\nset gfxpayload=keep\n\nmenuentry "momOS Live" {\n\tmultiboot /boot/kernel.bin\n\tmodule /boot/initrd.lfs\n\tboot\n}\n\nmenuentry "momOS Install" {\n\tmultiboot /boot/kernel.bin boot_mode=install\n\tmodule /boot/initrd.lfs\n\tboot\n}\n\nmenuentry "Memory Test (not included)" {\n\techo "No memtest in this build."\n\tsleep 3\n\treboot\n}\n' > iso/boot/grub/grub.cfg
 	grub-mkrescue -o momos.iso iso
 	rm -rf iso
 	@echo "momos.iso ready (Live + Install + Memtest stub)"
