@@ -159,7 +159,11 @@ tools/mkdisk: tools/mkdisk.c
 	$(HOSTCC) -std=c11 -O2 -Wall -o $@ $<
 
 # ── initrd image ──────────────────────────────────────────────────────────────
-initrd.lfs: tools/mklfs $(shell find initrd -type f)
+initrd/sys/boot/kernel.bin: kernel.bin
+	@mkdir -p initrd/sys/boot
+	cp kernel.bin initrd/sys/boot/kernel.bin
+
+initrd.lfs: tools/mklfs initrd/sys/boot/kernel.bin $(shell find initrd -type f)
 	./tools/mklfs initrd initrd.lfs
 
 # ── ASM objects ──────────────────────────────────────────────────────────────
@@ -247,11 +251,13 @@ cd: kernel.bin initrd.lfs
 grub-blobs:
 	mkdir -p initrd/sys/boot
 	dd if=/usr/lib/grub/i386-pc/boot.img of=initrd/sys/boot/mbr.bin bs=446 count=1
+	printf 'set timeout=0\ninsmod biosdisk\ninsmod part_msdos\ninsmod fat\nset root=(hd0,msdos1)\nmultiboot /kernel.bin\nmodule /initrd.lfs\nboot\n' \
+	    > /tmp/grub-embedded.cfg
 	grub-mkimage -O i386-pc \
+	    --config=/tmp/grub-embedded.cfg \
 	    -o initrd/sys/boot/core.img \
-	    -p "(hd0,msdos1)/boot/grub" \
-	    biosdisk part_msdos normal echo ls cat configfile
-	@echo "GRUB blobs written to initrd/sys/boot/"
+	    biosdisk part_msdos fat multiboot
+	@echo "GRUB blobs written to initrd/sys/boot/ (embedded config, no menu)"
 
 # ── Floppy images (run from WSL2) ─────────────────────────────────────────────
 # Requires: sudo apt install syslinux syslinux-common dosfstools mtools
