@@ -255,6 +255,7 @@ grub-blobs:
 	    > /tmp/grub-embedded.cfg
 	grub-mkimage -O i386-pc \
 	    --config=/tmp/grub-embedded.cfg \
+	    -p "" \
 	    -o initrd/sys/boot/core.img \
 	    biosdisk part_msdos fat multiboot
 	@echo "GRUB blobs written to initrd/sys/boot/ (embedded config, no menu)"
