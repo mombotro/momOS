@@ -144,17 +144,6 @@ local function do_install()
         if not ok then
             state = "error"; errmsg = "MBR write failed: " .. (err or "?"); return
         end
-        progress = "Saving user data to disk..."
-        install_step = 7
-        return
-    end
-
-    -- Step 7: persist user data to LFS partition 2
-    if install_step == 7 then
-        local ok, err = sys.save()
-        if not ok then
-            state = "error"; errmsg = "Save failed: " .. (err or "?"); return
-        end
         progress = nil
         state    = "done"
         return
