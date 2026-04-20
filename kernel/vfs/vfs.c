@@ -4,6 +4,8 @@
 #include "../mm/heap.h"
 #include <stdint.h>
 
+#define LFS_IND  (LFS_BLOCK_SIZE / 4)   /* 128 entries per indirect block */
+
 /* ── Internal state ─────────────────────────────────────────────────────────*/
 static uint8_t      *lfs_base   = 0;
 static lfs_super_t  *sb         = 0;
@@ -117,6 +119,19 @@ static int block_in_use(uint32_t blk) {
             for (uint32_t k = 0; k < entries; k++)
                 if (ind[k] == blk) return 1;
         }
+        /* Double-indirect */
+        if (n->indirect2 == blk) return 1;
+        if (n->indirect2) {
+            uint32_t *d2 = (uint32_t *)block_ptr(n->indirect2);
+            for (uint32_t j = 0; j < LFS_IND; j++) {
+                if (d2[j] == blk) return 1;
+                if (d2[j]) {
+                    uint32_t *l2 = (uint32_t *)block_ptr(d2[j]);
+                    for (uint32_t k = 0; k < LFS_IND; k++)
+                        if (l2[k] == blk) return 1;
+                }
+            }
+        }
     }
     return 0;
 }
@@ -152,6 +167,25 @@ static void free_inode_blocks(lfs_inode_t *n) {
         uint8_t *ib = (uint8_t *)block_ptr(n->indirect);
         for (int k = 0; k < LFS_BLOCK_SIZE; k++) ib[k] = 0;
         n->indirect = 0;
+    }
+    if (n->indirect2) {
+        uint32_t *d2 = (uint32_t *)block_ptr(n->indirect2);
+        for (uint32_t j = 0; j < LFS_IND; j++) {
+            if (!d2[j]) continue;
+            uint32_t *l2 = (uint32_t *)block_ptr(d2[j]);
+            for (uint32_t k = 0; k < LFS_IND; k++) {
+                if (!l2[k]) continue;
+                uint8_t *b = (uint8_t *)block_ptr(l2[k]);
+                for (int m = 0; m < LFS_BLOCK_SIZE; m++) b[m] = 0;
+                l2[k] = 0;
+            }
+            uint8_t *l2b = (uint8_t *)block_ptr(d2[j]);
+            for (int m = 0; m < LFS_BLOCK_SIZE; m++) l2b[m] = 0;
+            d2[j] = 0;
+        }
+        uint8_t *d2b = (uint8_t *)block_ptr(n->indirect2);
+        for (int m = 0; m < LFS_BLOCK_SIZE; m++) d2b[m] = 0;
+        n->indirect2 = 0;
     }
 }
 
@@ -205,12 +239,20 @@ uint32_t vfs_read(vfs_file_t *f, uint32_t offset, void *buf, uint32_t len) {
         uint32_t abs_blk;
         if (blk_idx < LFS_DIRECT) {
             abs_blk = n->direct[blk_idx];
-        } else {
-            /* Single indirect */
+        } else if (blk_idx < LFS_DIRECT + LFS_IND) {
             uint32_t ind_idx = blk_idx - LFS_DIRECT;
             if (!n->indirect) break;
             uint32_t *ind_tbl = (uint32_t *)block_ptr(n->indirect);
             abs_blk = ind_tbl[ind_idx];
+        } else {
+            uint32_t d_idx = blk_idx - LFS_DIRECT - LFS_IND;
+            uint32_t outer  = d_idx / LFS_IND;
+            uint32_t inner  = d_idx % LFS_IND;
+            if (!n->indirect2) break;
+            uint32_t *d2 = (uint32_t *)block_ptr(n->indirect2);
+            if (!d2[outer]) break;
+            uint32_t *l2 = (uint32_t *)block_ptr(d2[outer]);
+            abs_blk = l2[inner];
         }
 
         if (!abs_blk) break;
@@ -292,10 +334,11 @@ int vfs_mkdir(const char *path) {
     uint32_t idx = alloc_inode();
     if (idx == (uint32_t)-1) return -1;
     lfs_inode_t *n = &inode_tbl[idx];
-    n->type     = LFS_TYPE_DIR;
-    n->parent   = parent_idx;
-    n->size     = 0;
-    n->indirect = 0;
+    n->type      = LFS_TYPE_DIR;
+    n->parent    = parent_idx;
+    n->size      = 0;
+    n->indirect  = 0;
+    n->indirect2 = 0;
     for (int j = 0; j < LFS_DIRECT; j++) n->direct[j] = 0;
     uint32_t nlen = kstrlen(name);
     for (uint32_t i = 0; i <= nlen; i++) n->name[i] = name[i];
@@ -321,9 +364,10 @@ int vfs_write(const char *path, const void *data, uint32_t len) {
         uint32_t idx = alloc_inode();
         if (idx == (uint32_t)-1) return -1;
         n = &inode_tbl[idx];
-        n->type     = LFS_TYPE_FILE;
-        n->parent   = parent_idx;
-        n->indirect = 0;
+        n->type      = LFS_TYPE_FILE;
+        n->parent    = parent_idx;
+        n->indirect  = 0;
+        n->indirect2 = 0;
         for (int j = 0; j < LFS_DIRECT; j++) n->direct[j] = 0;
         uint32_t nlen = kstrlen(name);
         for (uint32_t i = 0; i <= nlen; i++) n->name[i] = name[i];
@@ -336,12 +380,32 @@ int vfs_write(const char *path, const void *data, uint32_t len) {
         uint32_t chunk = len - written;
         if (chunk > LFS_BLOCK_SIZE) chunk = LFS_BLOCK_SIZE;
 
-        /* Allocate indirect block before data block so alloc sees it as used */
-        if (blk_idx >= LFS_DIRECT && !n->indirect) {
-            n->indirect = alloc_block();
-            if (!n->indirect) return -1;
-            uint8_t *ib = (uint8_t *)block_ptr(n->indirect);
-            for (int k = 0; k < LFS_BLOCK_SIZE; k++) ib[k] = 0;
+        /* Allocate metadata blocks before data so block_in_use() sees them */
+        if (blk_idx >= LFS_DIRECT && blk_idx < LFS_DIRECT + LFS_IND) {
+            if (!n->indirect) {
+                n->indirect = alloc_block();
+                if (!n->indirect) return -1;
+                uint8_t *ib = (uint8_t *)block_ptr(n->indirect);
+                for (int k = 0; k < LFS_BLOCK_SIZE; k++) ib[k] = 0;
+            }
+        } else if (blk_idx >= LFS_DIRECT + LFS_IND) {
+            uint32_t d_idx = blk_idx - LFS_DIRECT - LFS_IND;
+            uint32_t outer  = d_idx / LFS_IND;
+            (void)outer;
+            if (!n->indirect2) {
+                n->indirect2 = alloc_block();
+                if (!n->indirect2) return -1;
+                uint8_t *d2b = (uint8_t *)block_ptr(n->indirect2);
+                for (int k = 0; k < LFS_BLOCK_SIZE; k++) d2b[k] = 0;
+            }
+            uint32_t *d2 = (uint32_t *)block_ptr(n->indirect2);
+            if (!d2[d_idx / LFS_IND]) {
+                uint32_t l2 = alloc_block();
+                if (!l2) return -1;
+                d2[d_idx / LFS_IND] = l2;
+                uint8_t *l2b = (uint8_t *)block_ptr(l2);
+                for (int k = 0; k < LFS_BLOCK_SIZE; k++) l2b[k] = 0;
+            }
         }
 
         uint32_t blk = alloc_block();
@@ -354,9 +418,16 @@ int vfs_write(const char *path, const void *data, uint32_t len) {
 
         if (blk_idx < LFS_DIRECT) {
             n->direct[blk_idx] = blk;
-        } else {
+        } else if (blk_idx < LFS_DIRECT + LFS_IND) {
             uint32_t *ind = (uint32_t *)block_ptr(n->indirect);
             ind[blk_idx - LFS_DIRECT] = blk;
+        } else {
+            uint32_t d_idx = blk_idx - LFS_DIRECT - LFS_IND;
+            uint32_t outer  = d_idx / LFS_IND;
+            uint32_t inner  = d_idx % LFS_IND;
+            uint32_t *d2 = (uint32_t *)block_ptr(n->indirect2);
+            uint32_t *l2 = (uint32_t *)block_ptr(d2[outer]);
+            l2[inner] = blk;
         }
         written += chunk;
         blk_idx++;
