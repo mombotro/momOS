@@ -55,47 +55,54 @@ static uint32_t alloc_block(void) {
 }
 
 /* Write bytes into data blocks starting at the given inode's direct/indirect
-   pointers. Splits across 512-byte blocks as needed. */
+   pointers. Supports direct, single-indirect, and double-indirect. */
 static void write_file_data(lfs_inode_t *inode, const uint8_t *data, uint32_t len) {
     uint32_t written = 0;
-    uint32_t blk_idx = 0;  /* which block pointer we are filling */
-
-    /* Indirect block contents (block indices), lazily allocated */
-    uint32_t indirect_buf[LFS_BLOCK_SIZE / 4];
-    memset(indirect_buf, 0, sizeof(indirect_buf));
-    int indirect_dirty = 0;
-    uint32_t indirect_blk = 0;
+    uint32_t blk_idx = 0;
+    const uint32_t IND = LFS_BLOCK_SIZE / 4; /* 128 entries per indirect block */
 
     while (written < len) {
         uint32_t chunk = len - written;
         if (chunk > LFS_BLOCK_SIZE) chunk = LFS_BLOCK_SIZE;
 
         uint32_t abs_blk;
+
         if (blk_idx < LFS_DIRECT) {
             abs_blk = alloc_block();
             inode->direct[blk_idx] = abs_blk;
-        } else {
-            /* Use indirect block */
+
+        } else if (blk_idx < LFS_DIRECT + IND) {
             uint32_t ind_idx = blk_idx - LFS_DIRECT;
-            if (ind_idx >= LFS_BLOCK_SIZE / 4)
-                die("file too large for single indirect");
             if (!inode->indirect) {
-                indirect_blk = alloc_block();
-                inode->indirect = indirect_blk;
+                inode->indirect = alloc_block();
+                memset(image[inode->indirect], 0, LFS_BLOCK_SIZE);
             }
             abs_blk = alloc_block();
-            indirect_buf[ind_idx] = abs_blk;
-            indirect_dirty = 1;
+            ((uint32_t *)image[inode->indirect])[ind_idx] = abs_blk;
+
+        } else {
+            uint32_t d_idx = blk_idx - LFS_DIRECT - IND;
+            uint32_t outer  = d_idx / IND;
+            uint32_t inner  = d_idx % IND;
+            if (outer >= IND) die("file too large for double indirect");
+
+            if (!inode->indirect2) {
+                inode->indirect2 = alloc_block();
+                memset(image[inode->indirect2], 0, LFS_BLOCK_SIZE);
+            }
+            uint32_t *d2 = (uint32_t *)image[inode->indirect2];
+            if (!d2[outer]) {
+                d2[outer] = alloc_block();
+                memset(image[d2[outer]], 0, LFS_BLOCK_SIZE);
+            }
+            abs_blk = alloc_block();
+            ((uint32_t *)image[d2[outer]])[inner] = abs_blk;
         }
 
         memcpy(image[abs_blk], data + written, chunk);
         written += chunk;
         blk_idx++;
     }
-
-    if (indirect_dirty)
-        memcpy(image[indirect_blk], indirect_buf, LFS_BLOCK_SIZE);
-
     inode->size = len;
 }
 

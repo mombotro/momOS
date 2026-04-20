@@ -4,7 +4,7 @@
    Block size : 512 bytes
    Inode size : 128 bytes  (4 per block)
    Max name   : 71 chars
-   Max file   : 8 direct blocks + 128 indirect = ~68 KB
+   Max file   : 8 direct + 128 single-indirect + 16384 double-indirect = ~8.5 MB
 
    Image layout
    ────────────
@@ -49,7 +49,8 @@ typedef struct {
     uint32_t direct[LFS_DIRECT]; /* direct data block indices       */
     uint32_t indirect;           /* single-indirect block index     */
     char     name[LFS_NAME_MAX + 1]; /* null-terminated filename    */
-    uint32_t reserved[2];
+    uint32_t indirect2;           /* double-indirect block index (0 = unused) */
+    uint32_t reserved;
 } __attribute__((packed)) lfs_inode_t;
 
 /* Compile-time size check — both must be exactly their declared sizes */
