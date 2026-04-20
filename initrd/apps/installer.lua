@@ -54,92 +54,106 @@ local install_drive = nil
 local function do_install()
     local d = install_drive
 
+    -- Step 0: announce and move to step 1
     if install_step == 0 then
         progress = "Partitioning drive " .. d.index .. "..."
         install_step = 1
         return
     end
 
+    -- Step 1: write 2-partition MBR (FAT12 + LFS)
     if install_step == 1 then
-        local total_secs = d.size_mb * 2048
-        local part_secs  = total_secs - 2048
-        local ok, err = sys.disk_write_mbr(d.index, 2048, part_secs)
+        local disk_secs = d.size_mb * 2048
+        local lfs_start = 18432
+        local lfs_size  = disk_secs - lfs_start
+        local ok, err = sys.disk_write_mbr2(d.index, 2048, 16384, lfs_start, lfs_size)
         if not ok then
-            state  = "error"
-            errmsg = "Partition failed: " .. (err or "?")
-            return
+            state = "error"; errmsg = "Partition failed: " .. (err or "?"); return
         end
-        progress = "Installing bootloader..."
+        progress = "Formatting boot partition..."
         install_step = 2
         return
     end
 
+    -- Step 2: format FAT12 at LBA 2048
     if install_step == 2 then
-        local mbr_code = fs.read("/sys/boot/mbr.bin")
-        if not mbr_code then
-            state  = "error"
-            errmsg = "Missing /sys/boot/mbr.bin — run make grub-blobs"
-            return
-        end
-        local ok, err = sys.disk_write_raw(d.index, 0, mbr_code)
+        local ok, err = sys.fat_format(d.index, 2048)
         if not ok then
-            state  = "error"
-            errmsg = "MBR write failed: " .. (err or "?")
-            return
+            state = "error"; errmsg = "FAT format failed: " .. (err or "?"); return
         end
+        progress = "Copying kernel..."
+        install_step = 3
+        return
+    end
+
+    -- Step 3: write kernel.bin to FAT partition
+    if install_step == 3 then
+        local kdata = fs.read("/sys/boot/kernel.bin")
+        if not kdata then
+            state = "error"; errmsg = "Missing /sys/boot/kernel.bin"; return
+        end
+        local ok, err = sys.fat_write(d.index, 2048, "kernel.bin", kdata)
+        if not ok then
+            state = "error"; errmsg = "kernel.bin write failed: " .. (err or "?"); return
+        end
+        progress = "Copying initrd..."
+        install_step = 4
+        return
+    end
+
+    -- Step 4: write live initrd.lfs to FAT partition
+    if install_step == 4 then
+        local ok, err = sys.fat_write_vfs(d.index, 2048, "initrd.lfs")
+        if not ok then
+            state = "error"; errmsg = "initrd.lfs write failed: " .. (err or "?"); return
+        end
+        progress = "Installing bootloader..."
+        install_step = 5
+        return
+    end
+
+    -- Step 5: write core.img to LBA 1–N
+    if install_step == 5 then
         local core = fs.read("/sys/boot/core.img")
         if not core then
-            state  = "error"
-            errmsg = "Missing /sys/boot/core.img — run make grub-blobs"
-            return
+            state = "error"; errmsg = "Missing /sys/boot/core.img — run make grub-blobs"; return
         end
         local lba = 1
         for off = 1, #core, 512 do
             local chunk = core:sub(off, off + 511)
             local ok2, err2 = sys.disk_write_raw(d.index, lba, chunk)
             if not ok2 then
-                state  = "error"
+                state = "error"
                 errmsg = "core.img write failed at LBA " .. lba .. ": " .. (err2 or "?")
                 return
             end
             lba = lba + 1
         end
-        progress = "Copying filesystem..."
-        install_step = 3
+        progress = "Writing MBR boot code..."
+        install_step = 6
         return
     end
 
-    if install_step == 3 then
-        local ok, err = sys.save()
-        if not ok then
-            state  = "error"
-            errmsg = "Pre-cfg save failed: " .. (err or "?")
-            return
+    -- Step 6: write mbr.bin boot code to LBA 0 (bytes 0–445, preserves partition table)
+    if install_step == 6 then
+        local mbr_code = fs.read("/sys/boot/mbr.bin")
+        if not mbr_code then
+            state = "error"; errmsg = "Missing /sys/boot/mbr.bin — run make grub-blobs"; return
         end
-        local res = SCREEN_W .. "x" .. SCREEN_H .. "x32"
-        local cfg = string.format(
-            "set timeout=5\nset default=0\n" ..
-            "set gfxmode=%s,%s\nset gfxpayload=keep\n\n" ..
-            "menuentry \"momOS\" {\n" ..
-            "\tmultiboot /boot/kernel.bin\n" ..
-            "\tmodule /boot/initrd.lfs\n" ..
-            "\tboot\n}\n",
-            res, "1024x600x32,800x600x32,640x480x32"
-        )
-        fs.mkdir("/boot")
-        fs.mkdir("/boot/grub")
-        fs.write("/boot/grub/grub.cfg", cfg)
-        progress = "Saving filesystem to disk..."
-        install_step = 4
+        local ok, err = sys.disk_write_raw(d.index, 0, mbr_code)
+        if not ok then
+            state = "error"; errmsg = "MBR write failed: " .. (err or "?"); return
+        end
+        progress = "Saving user data to disk..."
+        install_step = 7
         return
     end
 
-    if install_step == 4 then
+    -- Step 7: persist user data to LFS partition 2
+    if install_step == 7 then
         local ok, err = sys.save()
         if not ok then
-            state  = "error"
-            errmsg = "Save failed: " .. (err or "?")
-            return
+            state = "error"; errmsg = "Save failed: " .. (err or "?"); return
         end
         progress = nil
         state    = "done"
