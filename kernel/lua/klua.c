@@ -16,6 +16,7 @@
 #include "../audio/audio.h"
 #include "../disk/disk.h"
 #include "../disk/ata_pio.h"
+#include "../disk/fat12.h"
 #include "../lua/lua.h"
 #include "../lua/lauxlib.h"
 #include "../lua/lualib.h"
@@ -554,6 +555,91 @@ static int l_sys_disk_write_mbr(lua_State *ls) {
     return 2;
 }
 
+/* sys.fat_format(drive, lba_start) → bool, errmsg */
+static int l_sys_fat_format(lua_State *ls) {
+    int      drv = (int)luaL_checkinteger(ls, 1);
+    uint32_t lba = (uint32_t)luaL_checkinteger(ls, 2);
+    if (fat12_format(drv, lba) != 0) {
+        lua_pushboolean(ls, 0);
+        lua_pushstring(ls, "fat12_format failed");
+        return 2;
+    }
+    lua_pushboolean(ls, 1); lua_pushnil(ls); return 2;
+}
+
+/* sys.fat_write(drive, lba_start, name, data) → bool, errmsg */
+static int l_sys_fat_write(lua_State *ls) {
+    int         drv  = (int)luaL_checkinteger(ls, 1);
+    uint32_t    lba  = (uint32_t)luaL_checkinteger(ls, 2);
+    const char *name = luaL_checkstring(ls, 3);
+    size_t      dlen;
+    const char *data = luaL_checklstring(ls, 4, &dlen);
+    if (fat12_write_file(drv, lba, name, (const uint8_t *)data, (uint32_t)dlen) != 0) {
+        lua_pushboolean(ls, 0);
+        lua_pushstring(ls, "fat12_write failed");
+        return 2;
+    }
+    lua_pushboolean(ls, 1); lua_pushnil(ls); return 2;
+}
+
+/* sys.fat_write_vfs(drive, lba_start, name) → bool, errmsg */
+static int l_sys_fat_write_vfs(lua_State *ls) {
+    int         drv  = (int)luaL_checkinteger(ls, 1);
+    uint32_t    lba  = (uint32_t)luaL_checkinteger(ls, 2);
+    const char *name = luaL_checkstring(ls, 3);
+    if (fat12_write_vfs(drv, lba, name) != 0) {
+        lua_pushboolean(ls, 0);
+        lua_pushstring(ls, "fat12_write_vfs failed");
+        return 2;
+    }
+    lua_pushboolean(ls, 1); lua_pushnil(ls); return 2;
+}
+
+/* sys.disk_write_mbr2(drive, fat_start, fat_size, lfs_start, lfs_size) → bool, errmsg
+   Writes 2-partition MBR: p1=FAT12 (bootable), p2=LFS */
+static int l_sys_disk_write_mbr2(lua_State *ls) {
+    int      drv       = (int)luaL_checkinteger(ls, 1);
+    uint32_t fat_start = (uint32_t)luaL_checkinteger(ls, 2);
+    uint32_t fat_size  = (uint32_t)luaL_checkinteger(ls, 3);
+    uint32_t lfs_start = (uint32_t)luaL_checkinteger(ls, 4);
+    uint32_t lfs_size  = (uint32_t)luaL_checkinteger(ls, 5);
+
+    uint8_t mbr[512];
+    if (ata_read(drv, 0, 1, mbr) != 0)
+        for (int i = 0; i < 446; i++) mbr[i] = 0;
+
+    for (int i = 446; i < 510; i++) mbr[i] = 0;
+
+    /* Partition 1: FAT12, bootable */
+    uint8_t *p1 = mbr + 446;
+    p1[0] = 0x80;
+    p1[1] = 0xFE; p1[2] = 0xFF; p1[3] = 0xFF;
+    p1[4] = 0x01; /* FAT12 */
+    p1[5] = 0xFE; p1[6] = 0xFF; p1[7] = 0xFF;
+    p1[8]  = (uint8_t)(fat_start);       p1[9]  = (uint8_t)(fat_start >> 8);
+    p1[10] = (uint8_t)(fat_start >> 16); p1[11] = (uint8_t)(fat_start >> 24);
+    p1[12] = (uint8_t)(fat_size);        p1[13] = (uint8_t)(fat_size >> 8);
+    p1[14] = (uint8_t)(fat_size >> 16);  p1[15] = (uint8_t)(fat_size >> 24);
+
+    /* Partition 2: LFS */
+    uint8_t *p2 = mbr + 462;
+    p2[0] = 0x00;
+    p2[1] = 0xFE; p2[2] = 0xFF; p2[3] = 0xFF;
+    p2[4] = 0x4C; /* momOS LFS */
+    p2[5] = 0xFE; p2[6] = 0xFF; p2[7] = 0xFF;
+    p2[8]  = (uint8_t)(lfs_start);       p2[9]  = (uint8_t)(lfs_start >> 8);
+    p2[10] = (uint8_t)(lfs_start >> 16); p2[11] = (uint8_t)(lfs_start >> 24);
+    p2[12] = (uint8_t)(lfs_size);        p2[13] = (uint8_t)(lfs_size >> 8);
+    p2[14] = (uint8_t)(lfs_size >> 16);  p2[15] = (uint8_t)(lfs_size >> 24);
+
+    mbr[510] = 0x55; mbr[511] = 0xAA;
+
+    if (ata_write(drv, 0, 1, mbr) != 0) {
+        lua_pushboolean(ls, 0); lua_pushstring(ls, "write error"); return 2;
+    }
+    lua_pushboolean(ls, 1); lua_pushnil(ls); return 2;
+}
+
 static const luaL_Reg sys_lib[] = {
     {"ticks",       l_sys_ticks},
     {"mem",         l_sys_mem},
@@ -571,7 +657,11 @@ static const luaL_Reg sys_lib[] = {
     {"time",        l_sys_time},
     {"disk_scan",       l_sys_disk_scan},
     {"disk_write_raw",  l_sys_disk_write_raw},
-    {"disk_write_mbr",  l_sys_disk_write_mbr},
+    {"disk_write_mbr",   l_sys_disk_write_mbr},
+    {"disk_write_mbr2",  l_sys_disk_write_mbr2},
+    {"fat_format",       l_sys_fat_format},
+    {"fat_write",        l_sys_fat_write},
+    {"fat_write_vfs",    l_sys_fat_write_vfs},
     {NULL, NULL}
 };
 
