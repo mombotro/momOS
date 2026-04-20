@@ -39,7 +39,7 @@ local function center_x(text, font_w)
 end
 
 local function draw_centered(text, y, col)
-    gfx.print(center_x(text), y, text, col or FG)
+    gfx.print(text, center_x(text), y, col or FG)
 end
 
 -- ── Drive info string ─────────────────────────────────────────────────────────
@@ -232,9 +232,9 @@ function _draw()
             local x   = center_x(lbl)
             if i == sel then
                 gfx.rect(x - 4, y - 2, #lbl * 8 + 8, 14, FG)
-                gfx.print(x, y, lbl, BG)
+                gfx.print(lbl, x, y, BG)
             else
-                gfx.print(x, y, lbl, DIM)
+                gfx.print(lbl, x, y, DIM)
             end
         end
         draw_centered("UP/DOWN to navigate  ENTER to select", mid + 60, DIM)
