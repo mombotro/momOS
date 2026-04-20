@@ -69,6 +69,7 @@ OBJS = kernel/boot/entry.o \
        kernel/audio/pcspeaker.o \
        kernel/disk/ata_pio.o \
        kernel/disk/disk.o \
+       kernel/disk/fat12.o \
        kernel/lua/linit_kernel.o \
        kernel/lua/klua.o \
        $(COMPAT_OBJS) \
